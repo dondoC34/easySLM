@@ -1,0 +1,144 @@
+# ==============================================================================
+# easySLM Training Configuration
+# ==============================================================================
+# This configuration file controls the fine-tuning of Small Language Models (SLMs)
+# using Hugging Face Trainer, PEFT (LoRA), and MLflow tracking.
+# Tuned for efficient execution within 8 GB GPU VRAM (e.g., NVIDIA RTX 2070 / 3070 / 4060).
+
+# ------------------------------------------------------------------------------
+# Task & Architecture Settings
+# ------------------------------------------------------------------------------
+# Classification mode:
+# - 'cls': Direct classification using model backbone + pooling + dense linear head.
+# - 'json': Generative classification where the model outputs an alphabetically sorted JSON list, e.g. "['classA', 'classB']".
+mode: "cls"
+
+# Multi-label classification flag:
+# - true: Multi-label classification (multiple classes can be true simultaneously).
+#         In 'cls' mode: uses BCEWithLogitsLoss during training and Sigmoid activation during inference.
+# - false: Single-label classification (classes are mutually exclusive).
+#          In 'cls' mode: uses CrossEntropyLoss during training and Softmax activation during inference.
+multi_label: true
+
+# Sequence pooling strategy for 'cls' mode:
+# - 'eos': Uses the hidden state of the final appended <|endoftext|> (EOS) token (Recommended).
+# - 'mean': Attention-mask-weighted average across all valid token representations.
+# - 'max': Element-wise maximum across all valid token representations.
+pooling_strategy: "eos"
+
+# ------------------------------------------------------------------------------
+# Template & Prompt Configurations
+# ------------------------------------------------------------------------------
+# Path to the YAML file defining Jinja2 chat templates (e.g. ChatML, Llama-3).
+chat_template_config_path: "configs/chat_template.yml"
+
+# Path to the YAML file defining system and user prompt templates for CLS & JSON datasets.
+prompts_config_path: "configs/prompts.yml"
+
+# ------------------------------------------------------------------------------
+# Output & Directories
+# ------------------------------------------------------------------------------
+# Directory where training checkpoints and state files will be stored.
+output_dir: "./checkpoints"
+
+# Maximum sequence length in tokens (truncates longer sequences).
+# Lowering this (e.g., 256 or 512) saves significant GPU VRAM during attention computation.
+max_length: 512
+
+# ------------------------------------------------------------------------------
+# Memory & Batching Optimization (Tuned for 8 GB GPU VRAM)
+# ------------------------------------------------------------------------------
+# Batch size per GPU device during training.
+# Keep low (e.g., 2 or 4) to prevent CUDA Out Of Memory (OOM) on consumer GPUs.
+per_device_train_batch_size: 2
+
+# Batch size per GPU device during validation evaluation.
+per_device_eval_batch_size: 4
+
+# Number of update steps over which to accumulate gradients before performing an optimizer step.
+# Effective total batch size = per_device_train_batch_size * gradient_accumulation_steps.
+# Example: 2 * 4 = 8 effective batch size.
+gradient_accumulation_steps: 4
+
+# Whether to enable gradient checkpointing.
+# Drastically reduces GPU memory by recomputing activations during backward pass instead of storing all of them.
+# Highly recommended (true) when fine-tuning SLMs on 8 GB GPUs.
+gradient_checkpointing: true
+
+# ------------------------------------------------------------------------------
+# LoRA (Low-Rank Adaptation) / PEFT Settings
+# ------------------------------------------------------------------------------
+# Whether to use LoRA (Parameter-Efficient Fine-Tuning).
+# - true: Freezes the base model and trains low-rank adapter matrices (~0.5% - 1% of total parameters).
+#         Greatly reduces optimizer memory (AdamW states drop from ~4 GB to ~50 MB).
+# - false: Full-parameter fine-tuning (trains all model weights; requires gradient checkpointing on 8 GB GPUs).
+use_lora: true
+
+# LoRA rank dimension (inner dimension of adapter matrices). Typical values: 8, 16, 32.
+lora_r: 8
+
+# LoRA scaling factor (alpha). Usually set to 2 * lora_r.
+lora_alpha: 16
+
+# Dropout probability applied to LoRA adapter layers for regularization.
+lora_dropout: 0.05
+
+# Which modules to inject LoRA into. 'all-linear' applies adapters to all linear projection layers.
+lora_target_modules: "all-linear"
+
+# ------------------------------------------------------------------------------
+# Optimizer & Adaptive Learning Rate (Best Practices)
+# ------------------------------------------------------------------------------
+# Learning rate for AdamW optimizer.
+# If null, automatically selects: 2e-4 for LoRA, or 3e-5 for full-parameter fine-tuning.
+learning_rate: null
+
+# Learning rate scheduler type ('cosine', 'linear', 'constant_with_warmup').
+# 'cosine' decays the learning rate smoothly following a cosine curve.
+lr_scheduler_type: "cosine"
+
+# Fraction of total training steps dedicated to learning rate warmup (ramping from 0 up to learning_rate).
+# Prevents aggressive parameter updates at the start of training. Typical value: 0.1 (10%).
+warmup_ratio: 0.1
+
+# L2 regularization weight decay for AdamW optimizer (excluding bias and LayerNorm/RMSNorm weights).
+weight_decay: 0.01
+
+# Maximum gradient norm for gradient clipping.
+# Prevents gradient explosion by scaling gradients down if their global L2 norm exceeds this threshold.
+max_grad_norm: 1.0
+
+# Total number of training epochs to perform.
+num_train_epochs: 3.0
+
+# ------------------------------------------------------------------------------
+# Evaluation & Checkpointing Strategy
+# ------------------------------------------------------------------------------
+# Evaluation frequency: 'epoch' (evaluates at end of each epoch), 'steps' (every eval_steps), or 'no'.
+eval_strategy: "epoch"
+
+# Number of update steps between evaluations (only used if eval_strategy is 'steps').
+eval_steps: 10
+
+# Checkpoint saving frequency: 'epoch', 'steps', or 'no'.
+save_strategy: "no"
+
+# Maximum number of best/recent checkpoints to retain in output_dir.
+save_total_limit: 2
+
+# Number of update steps between training progress logs in terminal / logger.
+logging_steps: 5
+
+# Fraction of the dataset reserved for validation (e.g., 0.15 = 15% validation, 85% training).
+val_split_ratio: 0.15
+
+# Random seed for dataset shuffling and reproducibility.
+seed: 42
+
+# ------------------------------------------------------------------------------
+# MLflow Experiment Tracking
+# ------------------------------------------------------------------------------
+use_mlflow: true
+mlflow_tracking_uri: "sqlite:///mlflow.db"
+mlflow_experiment_name: "easySLM_finetuning"
+run_name: null

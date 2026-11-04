@@ -1,0 +1,47 @@
+# ==============================================================================
+# easySLM Prompt Templates Configuration
+# ==============================================================================
+# This configuration file defines the system and user prompt templates used for
+# SLM dataset generation, fine-tuning, and inference.
+#
+# Available dynamic placeholders:
+#   - {classes}   : Comma-separated list of single-quoted class names (e.g. "'economy', 'sports'")
+#   - {mode_desc} : Description of classification mode (injected from mode_descriptions below)
+#   - {example}   : [JSON mode only] Concrete formatted example of predicted classes
+#   - {text}      : [User prompt] The input raw text to classify
+# ==============================================================================
+
+# Description of classification mode injected into {mode_desc}
+mode_descriptions:
+  multi_label: "one or more applicable classes (multi-label)"
+  single_label: "the single most appropriate class (single-label)"
+
+# ------------------------------------------------------------------------------
+# Direct Classification (CLS Mode) Prompts
+# ------------------------------------------------------------------------------
+cls:
+  # System prompt defining model role and valid candidate classes.
+  # Placed inside the system message of the chat template.
+  system_prompt: >-
+    You are an expert text classification assistant.
+    Classify the user text into {mode_desc} from the following valid classes: [{classes}].
+
+  # User prompt template wrapping the raw input text.
+  # The placeholder {text} will be replaced with the actual sample text.
+  user_prompt: "{text}"
+
+# ------------------------------------------------------------------------------
+# Generative Classification (JSON Mode) Prompts
+# ------------------------------------------------------------------------------
+json:
+  # System prompt defining model role, output format constraints, and few-shot/zero-shot format example.
+  # Placed inside the system message of the chat template.
+  system_prompt: >-
+    You are a text classification model.
+    Classify the user text into {mode_desc} from the following valid classes: [{classes}].
+    Respond ONLY with a valid list of predicted class names sorted in alphabetical order,
+    for example: {example}. Do not output any additional text or explanation.
+
+  # User prompt template wrapping the raw input text.
+  # The placeholder {text} will be replaced with the actual sample text.
+  user_prompt: "{text}"
