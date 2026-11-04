@@ -218,3 +218,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+
+# easySLM local folders and temporary scripts
+/models/
+/predictions/
+/examples/
+/main.py
+data/*
+!data/sample_news*.txt
+/outputs/
+/checkpoints/
+/mlruns/
+/mlflow.db

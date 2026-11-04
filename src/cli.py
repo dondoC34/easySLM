@@ -1,0 +1,317 @@
+import argparse
+import logging
+import sys
+from typing import Any
+
+from src.fine_tuning import FineTuningConfig, SLMFineTuner
+from src.inference import SLMPredictor
+from src.utils.device import print_cuda_info
+from src.utils.help_tables import (
+    get_combined_help_tables,
+    get_ftune_help_table,
+    get_predict_help_table,
+)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
+    datefmt="%H:%M:%S",
+)
+logger = logging.getLogger("easyslm.cli")
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="easyslm",
+        description="easySLM: Generic CLI for Fine-Tuning and Inference with Small Language Models",
+    )
+    subparsers = parser.add_subparsers(dest="subcommand", help="Available commands")
+
+    # --------------------------------------------------------------------------
+    # Subcommand: ftune
+    # --------------------------------------------------------------------------
+    ftune_parser = subparsers.add_parser(
+        "ftune",
+        help="Fine-tune an SLM on a classification dataset",
+    )
+    ftune_parser.add_argument(
+        "--model",
+        type=str,
+        default="Qwen/Qwen2.5-0.5B",
+        help="Base model ID (e.g. 'Qwen/Qwen2.5-0.5B')",
+    )
+    ftune_parser.add_argument(
+        "--type",
+        dest="mode",
+        type=str,
+        choices=["cls", "json"],
+        default="cls",
+        help="Classification mode: 'cls' (linear classification head) or 'json' (generative list output)",
+    )
+    ftune_parser.add_argument(
+        "--data",
+        type=str,
+        default="data/sample_news.txt",
+        help="Path to training dataset (.txt file or folder)",
+    )
+    ftune_parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="./models/finetuned",
+        help="Directory where model checkpoints and model cards are saved",
+    )
+    ftune_parser.add_argument(
+        "--config",
+        type=str,
+        default="configs/training_config.yml",
+        help="Path to training configuration YAML file",
+    )
+    ftune_parser.add_argument(
+        "--prompts-config",
+        type=str,
+        default="configs/prompts.yml",
+        help="Path to prompts configuration YAML file",
+    )
+    ftune_parser.add_argument(
+        "--chat-template",
+        type=str,
+        default="configs/chat_template.yml",
+        help="Path to Jinja2 chat template configuration YAML file",
+    )
+
+    # Optional individual parameter overrides for training_config.yml
+    ftune_parser.add_argument(
+        "--epochs", type=float, default=None, help="Number of training epochs"
+    )
+    ftune_parser.add_argument(
+        "--batch-size", type=int, default=None, help="Per-device train batch size"
+    )
+    ftune_parser.add_argument(
+        "--eval-batch-size", type=int, default=None, help="Per-device eval batch size"
+    )
+    ftune_parser.add_argument("--lr", type=float, default=None, help="Learning rate")
+    ftune_parser.add_argument(
+        "--grad-accum", type=int, default=None, help="Gradient accumulation steps"
+    )
+    ftune_parser.add_argument(
+        "--max-length", type=int, default=None, help="Maximum sequence length in tokens"
+    )
+    ftune_parser.add_argument(
+        "--single-label", action="store_true", help="Force single-label classification"
+    )
+    ftune_parser.add_argument(
+        "--pooling",
+        type=str,
+        choices=["eos", "mean", "max"],
+        default=None,
+        help="Pooling strategy for 'cls' mode",
+    )
+    ftune_parser.add_argument(
+        "--no-lora", action="store_true", help="Disable LoRA (full model fine-tuning)"
+    )
+    ftune_parser.add_argument("--lora-r", type=int, default=None, help="LoRA rank r")
+    ftune_parser.add_argument(
+        "--lora-alpha", type=int, default=None, help="LoRA alpha scaling factor"
+    )
+    ftune_parser.add_argument(
+        "--no-mlflow", action="store_true", help="Disable MLflow experiment tracking"
+    )
+    ftune_parser.add_argument(
+        "--run-name", type=str, default=None, help="Run name for MLflow and checkpoints"
+    )
+
+    # --------------------------------------------------------------------------
+    # Subcommand: predict
+    # --------------------------------------------------------------------------
+    pred_parser = subparsers.add_parser(
+        "predict",
+        help="Run inference on text files with a fine-tuned model (or the best saved model)",
+    )
+    pred_parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Path to a specific model checkpoint. If omitted, automatically selects the best model from --models-dir",
+    )
+    pred_parser.add_argument(
+        "--models-dir",
+        type=str,
+        default="./models/finetuned",
+        help="Directory to search for model cards when --model is not specified",
+    )
+    pred_parser.add_argument(
+        "--type",
+        dest="mode",
+        type=str,
+        choices=["cls", "json"],
+        default="cls",
+        help="Model type to use or search for ('cls' or 'json')",
+    )
+    pred_parser.add_argument(
+        "--data",
+        type=str,
+        default="data/sample_news_validation.txt",
+        help="Path to .txt file or folder containing .txt files to predict on",
+    )
+    pred_parser.add_argument(
+        "--output-dir",
+        type=str,
+        default="predictions",
+        help="Directory where predictions will be saved (.txt and .json)",
+    )
+    pred_parser.add_argument(
+        "--metric",
+        type=str,
+        default="eval_f1_macro",
+        help="Performance metric used to select best model if --model is omitted (e.g. 'eval_f1_macro', 'eval_exact_match_accuracy')",
+    )
+    pred_parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=8,
+        help="Inference batch size",
+    )
+    pred_parser.add_argument(
+        "--prompts-config",
+        type=str,
+        default="configs/prompts.yml",
+        help="Path to prompts configuration YAML file",
+    )
+    pred_parser.add_argument(
+        "--chat-template",
+        type=str,
+        default="configs/chat_template.yml",
+        help="Path to Jinja2 chat template configuration YAML file",
+    )
+
+    # --------------------------------------------------------------------------
+    # Subcommand: info
+    # --------------------------------------------------------------------------
+    subparsers.add_parser("info", help="Print GPU / CUDA diagnostic information")
+
+    return parser
+
+
+def run_ftune(args: argparse.Namespace) -> None:
+    overrides: dict[str, Any] = {}
+    if args.mode is not None:
+        overrides["mode"] = args.mode
+    if args.output_dir is not None:
+        overrides["output_dir"] = args.output_dir
+    if args.prompts_config is not None:
+        overrides["prompts_config_path"] = args.prompts_config
+    if args.chat_template is not None:
+        overrides["chat_template_config_path"] = args.chat_template
+    if args.epochs is not None:
+        overrides["num_train_epochs"] = args.epochs
+    if args.batch_size is not None:
+        overrides["per_device_train_batch_size"] = args.batch_size
+    if args.eval_batch_size is not None:
+        overrides["per_device_eval_batch_size"] = args.eval_batch_size
+    if args.lr is not None:
+        overrides["learning_rate"] = args.lr
+    if args.grad_accum is not None:
+        overrides["gradient_accumulation_steps"] = args.grad_accum
+    if args.max_length is not None:
+        overrides["max_length"] = args.max_length
+    if args.single_label:
+        overrides["multi_label"] = False
+    if args.pooling is not None:
+        overrides["pooling_strategy"] = args.pooling
+    if args.no_lora:
+        overrides["use_lora"] = False
+    if args.lora_r is not None:
+        overrides["lora_r"] = args.lora_r
+    if args.lora_alpha is not None:
+        overrides["lora_alpha"] = args.lora_alpha
+    if args.no_mlflow:
+        overrides["use_mlflow"] = False
+    if args.run_name is not None:
+        overrides["run_name"] = args.run_name
+
+    logger.info(
+        "Initializing fine-tuning with config '%s' and model '%s'...", args.config, args.model
+    )
+    config = FineTuningConfig.from_yaml(args.config, **overrides)
+    tuner = SLMFineTuner(model_name=args.model, config=config)
+    results = tuner.train(train_data_path=args.data)
+    logger.info(
+        "Fine-tuning completed successfully! Checkpoint saved at: %s", results.get("checkpoint_dir")
+    )
+
+
+def run_predict(args: argparse.Namespace) -> None:
+    if args.model is not None:
+        logger.info("Loading specified model checkpoint from: %s", args.model)
+        predictor = SLMPredictor.from_checkpoint(
+            checkpoint_dir=args.model,
+            prompts_config_path=args.prompts_config,
+            chat_template_config_path=args.chat_template,
+        )
+    else:
+        logger.info(
+            "No --model specified. Searching for best '%s' model in '%s' (ranking by '%s')...",
+            args.mode,
+            args.models_dir,
+            args.metric,
+        )
+        predictor, best_checkpoint, best_card = SLMPredictor.from_best_model(
+            models_dir=args.models_dir,
+            model_type=args.mode,
+            metric=args.metric,
+            prompts_config_path=args.prompts_config,
+            chat_template_config_path=args.chat_template,
+        )
+        logger.info(
+            "Loaded best model from: %s (as of %s)",
+            best_checkpoint,
+            best_card.get("as_of", "N/A"),
+        )
+
+    logger.info("Predicting on data: '%s'...", args.data)
+    output_files = predictor.predict_file_or_dir(
+        data_path=args.data,
+        output_dir=args.output_dir,
+        batch_size=args.batch_size,
+    )
+    logger.info("Predictions successfully written to:")
+    for f in output_files:
+        logger.info("  - %s", f)
+
+
+def main() -> None:
+    args_list = sys.argv[1:]
+    is_help = any(arg in ("-h", "--help", "help") for arg in args_list)
+
+    if is_help:
+        if "ftune" in args_list:
+            print(get_ftune_help_table())
+            sys.exit(0)
+        elif "predict" in args_list:
+            print(get_predict_help_table())
+            sys.exit(0)
+        else:
+            print(get_combined_help_tables())
+            sys.exit(0)
+
+    # When no arguments are provided, print full reference table
+    if not args_list:
+        print(get_combined_help_tables())
+        sys.exit(0)
+
+    parser = build_parser()
+    args = parser.parse_args()
+
+    if args.subcommand == "ftune":
+        run_ftune(args)
+    elif args.subcommand == "predict":
+        run_predict(args)
+    elif args.subcommand == "info":
+        logger.info("=== easySLM System Information ===")
+        print_cuda_info()
+    else:
+        print(get_combined_help_tables())
+
+
+if __name__ == "__main__":
+    main()
