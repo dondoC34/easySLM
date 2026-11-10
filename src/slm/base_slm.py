@@ -39,6 +39,7 @@ class SLMBase(nn.Module, ABC):
     """
 
     TASK_MODE: Literal["cls", "json"] = "cls"
+    accepts_loss_kwargs: bool = False
 
     def __init__(
         self,

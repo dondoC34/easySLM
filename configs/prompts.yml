@@ -31,11 +31,12 @@ cls:
   user_prompt: "{text}"
 
   # Full plain-text prompt template combining {system_prompt} and {user_prompt}.
-  # The tokenizer's native eos_token is appended automatically at the end.
+  # Ends with "Label:" so the final token queries the sequence for the classification label.
   prompt_template: |-
     {system_prompt}
 
     Text: {user_prompt}
+    Label:
 
 # ------------------------------------------------------------------------------
 # Generative Classification (JSON Mode) Prompts

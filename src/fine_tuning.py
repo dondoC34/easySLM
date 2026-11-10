@@ -14,6 +14,7 @@ from transformers import (
     PreTrainedTokenizerBase,
     Trainer,
     TrainingArguments,
+    set_seed,
 )
 
 from src.data import SLMClsDataset, SLMDatasetBase, SLMJsonDataset
@@ -187,7 +188,7 @@ def apply_lora_to_model(
     """
     Wraps `model.backbone` with LoRA adapters using `peft` so that only ~0.5% of parameters
     require optimizer states, keeping GPU VRAM usage well within 8 GB.
-    In `SLMCls` mode, keeps the linear `classifier` head fully trainable alongside LoRA.
+    In `SLMCls` mode, keeps the `norm` and linear `classifier` head fully trainable alongside LoRA.
     """
     task_type = TaskType.CAUSAL_LM if isinstance(model, SLMJson) else TaskType.FEATURE_EXTRACTION
     lora_config = LoraConfig(
@@ -200,8 +201,10 @@ def apply_lora_to_model(
     )
     model.backbone = get_peft_model(model.backbone, lora_config)  # type: ignore[assignment]
 
-    # Ensure the dense classification head in SLMCls remains trainable
+    # Ensure the LayerNorm and dense classification head in SLMCls remain trainable
     if isinstance(model, SLMCls):
+        for param in model.norm.parameters():
+            param.requires_grad = True
         for param in model.classifier.parameters():
             param.requires_grad = True
 
@@ -546,6 +549,7 @@ class SLMFineTuner:
             classes=classes,
         )
 
+        set_seed(self.config.seed)
         model = self.build_model(classes=self.classes)
         collator = base_dataset.get_collator(padding_side="right", device=None)
         training_args = self.build_training_arguments(

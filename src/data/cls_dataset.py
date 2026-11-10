@@ -13,12 +13,13 @@ class SLMClsDataset(SLMDatasetBase):
 
     For each datapoint `(text, labels)`:
     - Builds the plain-text prompt from `configs/prompts.yml`.
-    - Tokenizes the prompt and appends the tokenizer's native `eos_token_id` at the end.
+    - Tokenizes the prompt without appending a document-reset EOS token at the end,
+      preserving the causal LM representation at the final prompt token (`Label:`).
     - Encodes the target `labels` as a binary 0/1 vector of shape `(num_classes,)` (`torch.float32`).
     """
 
     TASK_MODE = "cls"
-    DEFAULT_PROMPT_TEMPLATE = "{system_prompt}\n\nText: {user_prompt}"
+    DEFAULT_PROMPT_TEMPLATE = "{system_prompt}\n\nText: {user_prompt}\nLabel:"
 
     def _build_default_system_prompt(self) -> str:
         classes_str = ", ".join(f"'{c}'" for c in self.classes)
@@ -53,16 +54,8 @@ class SLMClsDataset(SLMDatasetBase):
         prompt_str = self.build_prompt(text)
         token_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)
 
-        eos_token_id = self.tokenizer.eos_token_id
         if self.max_length is not None:
-            if eos_token_id is not None and len(token_ids) >= self.max_length:
-                token_ids = token_ids[: self.max_length - 1]
-            else:
-                token_ids = token_ids[: self.max_length]
-
-        # Append native EOS token at the end so its hidden state summarizes the full sequence
-        if eos_token_id is not None and (len(token_ids) == 0 or token_ids[-1] != eos_token_id):
-            token_ids = token_ids + [eos_token_id]
+            token_ids = token_ids[: self.max_length]
 
         attention_mask = [1] * len(token_ids)
         sample_dict: dict[str, torch.Tensor] = {

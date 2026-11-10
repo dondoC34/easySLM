@@ -59,9 +59,15 @@ def save_finetuned_model(
     # 2. Save tokenizer
     active_tokenizer.save_pretrained(save_path)
 
-    # 3. For SLMCls, save classification head
+    # 3. For SLMCls, save normalization and classification head
     if isinstance(model, SLMCls):
-        torch.save(model.classifier.state_dict(), save_path / "classifier.pt")
+        torch.save(
+            {
+                "norm": model.norm.state_dict(),
+                "classifier": model.classifier.state_dict(),
+            },
+            save_path / "classifier.pt",
+        )
 
     # 4. Save easySLM metadata
     max_length = model.max_length or (training_params or {}).get("max_length")
@@ -186,7 +192,12 @@ def load_finetuned_model(
         classifier_file = path / "classifier.pt"
         if classifier_file.exists():
             classifier_state = torch.load(classifier_file, map_location=factory.device)
-            cls_model.classifier.load_state_dict(classifier_state)
+            if isinstance(classifier_state, dict) and "classifier" in classifier_state:
+                if "norm" in classifier_state:
+                    cls_model.norm.load_state_dict(classifier_state["norm"])
+                cls_model.classifier.load_state_dict(classifier_state["classifier"])
+            else:
+                cls_model.classifier.load_state_dict(classifier_state)
             logger.info("Loaded trained classification head from '%s'.", classifier_file.name)
         else:
             logger.warning("No classifier.pt found in '%s'; using initialized head weights.", path)
