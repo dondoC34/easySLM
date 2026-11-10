@@ -18,7 +18,7 @@ mode: "cls"
 #         In 'cls' mode: uses BCEWithLogitsLoss during training and Sigmoid activation during inference.
 # - false: Single-label classification (classes are mutually exclusive).
 #          In 'cls' mode: uses CrossEntropyLoss during training and Softmax activation during inference.
-multi_label: true
+multi_label: false
 
 # Sequence pooling strategy for 'cls' mode:
 # - 'eos': Uses the hidden state of the final appended <|endoftext|> (EOS) token (Recommended).
@@ -27,11 +27,8 @@ multi_label: true
 pooling_strategy: "eos"
 
 # ------------------------------------------------------------------------------
-# Template & Prompt Configurations
+# Prompt Configuration
 # ------------------------------------------------------------------------------
-# Path to the YAML file defining Jinja2 chat templates (e.g. ChatML, Llama-3).
-chat_template_config_path: "configs/chat_template.yml"
-
 # Path to the YAML file defining system and user prompt templates for CLS & JSON datasets.
 prompts_config_path: "configs/prompts.yml"
 
@@ -50,7 +47,7 @@ max_length: 512
 # ------------------------------------------------------------------------------
 # Batch size per GPU device during training.
 # Keep low (e.g., 2 or 4) to prevent CUDA Out Of Memory (OOM) on consumer GPUs.
-per_device_train_batch_size: 2
+per_device_train_batch_size: 1
 
 # Batch size per GPU device during validation evaluation.
 per_device_eval_batch_size: 4
@@ -58,7 +55,7 @@ per_device_eval_batch_size: 4
 # Number of update steps over which to accumulate gradients before performing an optimizer step.
 # Effective total batch size = per_device_train_batch_size * gradient_accumulation_steps.
 # Example: 2 * 4 = 8 effective batch size.
-gradient_accumulation_steps: 4
+gradient_accumulation_steps: 8
 
 # Whether to enable gradient checkpointing.
 # Drastically reduces GPU memory by recomputing activations during backward pass instead of storing all of them.
@@ -115,10 +112,10 @@ num_train_epochs: 3.0
 # Evaluation & Checkpointing Strategy
 # ------------------------------------------------------------------------------
 # Evaluation frequency: 'epoch' (evaluates at end of each epoch), 'steps' (every eval_steps), or 'no'.
-eval_strategy: "epoch"
+eval_strategy: "steps"
 
 # Number of update steps between evaluations (only used if eval_strategy is 'steps').
-eval_steps: 10
+eval_steps: 5
 
 # Checkpoint saving frequency: 'epoch', 'steps', or 'no'.
 save_strategy: "no"

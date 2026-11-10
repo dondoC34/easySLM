@@ -1,0 +1,12 @@
+server:
+  host: "127.0.0.1"
+  port: 5000
+  backend_store_uri: "sqlite:///mlflow.db"
+  default_artifact_root: "./mlruns"
+
+tracking:
+  experiment_prefix: "easySLM"
+  autolog_figures: true
+  autolog_model: true
+  system_metrics: true
+  system_metrics_sampling_interval: 10
