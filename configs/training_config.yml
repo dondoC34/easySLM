@@ -21,7 +21,7 @@ mode: "cls"
 multi_label: false
 
 # Sequence pooling strategy for 'cls' mode:
-# - 'eos': Uses the hidden state of the final appended <|endoftext|> (EOS) token (Recommended).
+# - 'eos': Uses the hidden state of the final non-padding prompt token (Recommended).
 # - 'mean': Attention-mask-weighted average across all valid token representations.
 # - 'max': Element-wise maximum across all valid token representations.
 pooling_strategy: "eos"

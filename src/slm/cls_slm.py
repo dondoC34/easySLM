@@ -19,10 +19,12 @@ class SLMCls(SLMBase):
     Architecture:
     - Backbone: AutoModel (Transformer backbone returning `last_hidden_state`).
     - Pooling: Parametric pooling over sequence hidden states:
-        * `'eos'` (default): extracts the hidden state of the final valid token (the appended EOS token).
+        * `'eos'` (default): extracts the hidden state of the final valid (non-pad) prompt token.
         * `'mean'`: attention-mask-weighted mean pooling across valid tokens.
         * `'max'`: attention-mask-aware max pooling across valid tokens.
-    - Dense Layer: `nn.Linear(hidden_size, num_classes)` projecting pooled states to class logits.
+    - Normalization & Dense Layer: `nn.LayerNorm(hidden_size)` followed by `nn.Linear(hidden_size, num_classes)`
+      (kept in `float32` for numerical stability under mixed-precision AdamW updates) projecting
+      normalized pooled states to class logits.
     - Inputs (prepared by `SLMClsDataset` + `SLMCollator`):
         * `input_ids`: `(batch_size, seq_len)`
         * `attention_mask`: `(batch_size, seq_len)`
@@ -68,13 +70,23 @@ class SLMCls(SLMBase):
         if hidden_size is None:
             raise ValueError("Could not determine `hidden_size` from `backbone.config`.")
 
+        self.norm = nn.LayerNorm(
+            hidden_size,
+            device=self.device,
+            dtype=torch.float32,
+        )
+        nn.init.constant_(self.norm.weight, 0.5)
+        nn.init.zeros_(self.norm.bias)
+
         self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(
             hidden_size,
             self.num_classes,
             device=self.device,
-            dtype=self.dtype,
+            dtype=torch.float32,
         )
+        nn.init.normal_(self.classifier.weight, mean=0.0, std=0.05)
+        nn.init.zeros_(self.classifier.bias)
 
         self.loss_fn: nn.Module = (
             nn.BCEWithLogitsLoss() if self.multi_label else nn.CrossEntropyLoss()
@@ -118,7 +130,7 @@ class SLMCls(SLMBase):
         """
         Pools sequence hidden states `(batch_size, seq_len, hidden_size)` into `(batch_size, hidden_size)`
         according to `self.pooling_strategy`:
-        - `'eos'`: extracts the hidden state at the last valid (non-pad) token index (the appended EOS token).
+        - `'eos'`: extracts the hidden state at the last valid (non-pad) token index.
         - `'mean'`: attention-mask-weighted average pooling.
         - `'max'`: attention-mask-aware max pooling.
         """
@@ -172,7 +184,7 @@ class SLMCls(SLMBase):
         **kwargs,
     ) -> dict[str, Any]:
         """
-        Forward pass through the backbone, parametric pooling layer, and dense classification head.
+        Forward pass through the backbone, parametric pooling layer, LayerNorm, and dense classification head.
         Accepts exclusively tensor inputs (`input_ids`, `attention_mask`, and optional `labels`).
         """
         input_ids = input_ids.to(self.device)
@@ -190,7 +202,8 @@ class SLMCls(SLMBase):
             hidden_states = outputs.hidden_states[-1]
 
         pooled = self.pool_hidden_states(hidden_states, attention_mask)
-        logits = self.classifier(self.dropout(pooled))
+        normed = self.norm(pooled.float())
+        logits = self.classifier(self.dropout(normed))
 
         loss = None
         if labels is not None:
