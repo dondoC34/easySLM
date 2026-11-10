@@ -1,8 +1,9 @@
 import ast
 import json
 import re
-from collections.abc import Sequence
-from typing import Any, cast
+from collections.abc import Container, Sequence
+from pathlib import Path
+from typing import Any, Literal, cast
 
 import torch
 import torch.nn as nn
@@ -27,16 +28,26 @@ class SLMJson(SLMBase):
       the unmasked assistant response tokens.
     """
 
+    TASK_MODE: Literal["cls", "json"] = "json"
+
     def __init__(
         self,
         backbone: PreTrainedModel,
         classes: Sequence[str],
         multi_label: bool = True,
+        tokenizer: PreTrainedTokenizerBase | None = None,
+        prompts_config_path: str | Path = "configs/prompts.yml",
+        max_length: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         super().__init__(
             backbone=backbone,
             classes=classes,
             multi_label=multi_label,
+            tokenizer=tokenizer,
+            prompts_config_path=prompts_config_path,
+            max_length=max_length,
+            metadata=metadata,
         )
         self.loss_fn = nn.CrossEntropyLoss(ignore_index=-100)
 
@@ -46,20 +57,25 @@ class SLMJson(SLMBase):
         model_name: str,
         classes: Sequence[str],
         multi_label: bool = True,
+        prompts_config_path: str | Path = "configs/prompts.yml",
+        max_length: int | None = None,
         factory: ModelFactory | None = None,
         **model_kwargs,
-    ) -> tuple["SLMJson", PreTrainedTokenizerBase]:
+    ) -> "SLMJson":
         """
-        Instantiates `SLMJson` and returns `(model, tokenizer)` using `ModelFactory`.
+        Instantiates `SLMJson` (with `model.tokenizer` attached) using `ModelFactory`.
         """
         factory = factory or ModelFactory()
         backbone, tokenizer = factory.get_causal_lm(model_name, **model_kwargs)
-        model = cls(
+        return cls(
             backbone=backbone,
             classes=classes,
             multi_label=multi_label,
+            tokenizer=tokenizer,
+            prompts_config_path=prompts_config_path,
+            max_length=max_length,
+            metadata={"base_model_name": model_name, "mode": "json"},
         )
-        return model, tokenizer
 
     def compute_loss(
         self,
@@ -107,10 +123,14 @@ class SLMJson(SLMBase):
             "logits": logits,
         }
 
-    def parse_json_output(self, raw_text: str) -> list[str]:
+    @staticmethod
+    def parse_class_list(
+        raw_text: str,
+        valid_classes: Container[str],
+    ) -> tuple[list[str], bool]:
         """
         Extracts and parses a JSON/Python list of predicted class names from a generated string.
-        Filters and returns valid class names sorted alphabetically.
+        Returns `(sorted_valid_classes, is_valid_json_list)`.
         """
         text = raw_text.strip()
         match = re.search(r"\[.*?\]", text, flags=re.DOTALL)
@@ -125,9 +145,19 @@ class SLMJson(SLMBase):
                 continue
 
         if isinstance(parsed, list):
-            valid = [str(item) for item in parsed if str(item) in self.class_to_idx]
-            return sorted(list(dict.fromkeys(valid)))
-        return []
+            valid = sorted(
+                list(dict.fromkeys(str(item) for item in parsed if str(item) in valid_classes))
+            )
+            return valid, True
+        return [], False
+
+    def parse_json_output(self, raw_text: str) -> list[str]:
+        """
+        Extracts and parses a JSON/Python list of predicted class names from a generated string.
+        Filters and returns valid class names sorted alphabetically.
+        """
+        valid, _ = self.parse_class_list(raw_text, self.class_to_idx)
+        return valid
 
     @torch.no_grad()
     def predict(
@@ -141,18 +171,21 @@ class SLMJson(SLMBase):
     ) -> dict[str, Any]:
         """
         Autoregressively generates the assistant tokens given `(input_ids, attention_mask)`.
-        If `tokenizer` is provided, also decodes the generated tokens into strings and parses the JSON lists.
+        Uses `tokenizer` (or `self.tokenizer`) to decode the generated tokens into strings
+        and parse the JSON class lists.
         """
         was_training = self.training
         self.eval()
+
+        active_tokenizer = tokenizer or self.tokenizer
 
         input_ids = input_ids.to(self.device)
         attention_mask = attention_mask.to(self.device)
         prompt_len = input_ids.shape[1]
 
         pad_token_id = getattr(self.backbone.config, "pad_token_id", None)
-        if pad_token_id is None and tokenizer is not None:
-            pad_token_id = tokenizer.pad_token_id
+        if pad_token_id is None and active_tokenizer is not None:
+            pad_token_id = active_tokenizer.pad_token_id
 
         stop_token_ids = []
         eos_id = getattr(self.backbone.config, "eos_token_id", None)
@@ -161,16 +194,14 @@ class SLMJson(SLMBase):
         elif isinstance(eos_id, list):
             stop_token_ids.extend(eos_id)
 
-        if tokenizer is not None:
-            if tokenizer.eos_token_id is not None and tokenizer.eos_token_id not in stop_token_ids:
-                stop_token_ids.append(tokenizer.eos_token_id)
-            im_end_id = tokenizer.convert_tokens_to_ids("<|im_end|>")
+        if active_tokenizer is not None:
             if (
-                isinstance(im_end_id, int)
-                and im_end_id != tokenizer.unk_token_id
-                and im_end_id not in stop_token_ids
+                active_tokenizer.eos_token_id is not None
+                and active_tokenizer.eos_token_id not in stop_token_ids
             ):
-                stop_token_ids.append(im_end_id)
+                stop_token_ids.append(active_tokenizer.eos_token_id)
+
+        gen_kwargs = dict(generate_kwargs)
 
         generated_ids = cast(Any, self.backbone).generate(
             input_ids=input_ids,
@@ -179,7 +210,7 @@ class SLMJson(SLMBase):
             do_sample=do_sample,
             pad_token_id=pad_token_id,
             eos_token_id=stop_token_ids if stop_token_ids else None,
-            **generate_kwargs,
+            **gen_kwargs,
         )
 
         assistant_token_ids = generated_ids[:, prompt_len:]
@@ -187,8 +218,10 @@ class SLMJson(SLMBase):
             "generated_token_ids": assistant_token_ids,
         }
 
-        if tokenizer is not None:
-            raw_outputs = tokenizer.batch_decode(assistant_token_ids, skip_special_tokens=True)
+        if active_tokenizer is not None:
+            raw_outputs = active_tokenizer.batch_decode(
+                assistant_token_ids, skip_special_tokens=True
+            )
             result["raw_outputs"] = [r.strip() for r in raw_outputs]
             result["predictions"] = [self.parse_json_output(raw) for raw in raw_outputs]
 

@@ -4,11 +4,13 @@ import sys
 from typing import Any
 
 from src.fine_tuning import FineTuningConfig, SLMFineTuner
-from src.inference import SLMPredictor
+from src.slm import SLMBase
+from src.tracking.cli import handle_mlflow_cli
 from src.utils.device import print_cuda_info
 from src.utils.help_tables import (
     get_combined_help_tables,
     get_ftune_help_table,
+    get_mlflow_help_table,
     get_predict_help_table,
 )
 
@@ -38,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--model",
         type=str,
         default="Qwen/Qwen2.5-0.5B",
-        help="Base model ID (e.g. 'Qwen/Qwen2.5-0.5B')",
+        help="Base model ID (e.g. 'Qwen/Qwen2.5-0.5B', 'Qwen/Qwen2.5-1.5B', 'meta-llama/Llama-3.2-1B', 'google/gemma-2-2b')",
     )
     ftune_parser.add_argument(
         "--type",
@@ -53,6 +55,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default="data/sample_news.txt",
         help="Path to training dataset (.txt file or folder)",
+    )
+    ftune_parser.add_argument(
+        "--val-data",
+        type=str,
+        default=None,
+        help="Optional path to separate validation dataset (.txt file or folder)",
     )
     ftune_parser.add_argument(
         "--output-dir",
@@ -71,12 +79,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default="configs/prompts.yml",
         help="Path to prompts configuration YAML file",
-    )
-    ftune_parser.add_argument(
-        "--chat-template",
-        type=str,
-        default="configs/chat_template.yml",
-        help="Path to Jinja2 chat template configuration YAML file",
     )
 
     # Optional individual parameter overrides for training_config.yml
@@ -177,11 +179,13 @@ def build_parser() -> argparse.ArgumentParser:
         default="configs/prompts.yml",
         help="Path to prompts configuration YAML file",
     )
-    pred_parser.add_argument(
-        "--chat-template",
-        type=str,
-        default="configs/chat_template.yml",
-        help="Path to Jinja2 chat template configuration YAML file",
+
+    # --------------------------------------------------------------------------
+    # Subcommand: mlflow
+    # --------------------------------------------------------------------------
+    subparsers.add_parser(
+        "mlflow",
+        help="Manage MLflow tracking server, runs, metrics, and storage",
     )
 
     # --------------------------------------------------------------------------
@@ -200,8 +204,6 @@ def run_ftune(args: argparse.Namespace) -> None:
         overrides["output_dir"] = args.output_dir
     if args.prompts_config is not None:
         overrides["prompts_config_path"] = args.prompts_config
-    if args.chat_template is not None:
-        overrides["chat_template_config_path"] = args.chat_template
     if args.epochs is not None:
         overrides["num_train_epochs"] = args.epochs
     if args.batch_size is not None:
@@ -234,7 +236,7 @@ def run_ftune(args: argparse.Namespace) -> None:
     )
     config = FineTuningConfig.from_yaml(args.config, **overrides)
     tuner = SLMFineTuner(model_name=args.model, config=config)
-    results = tuner.train(train_data_path=args.data)
+    results = tuner.train(train_data_path=args.data, val_data_path=args.val_data)
     logger.info(
         "Fine-tuning completed successfully! Checkpoint saved at: %s", results.get("checkpoint_dir")
     )
@@ -243,10 +245,9 @@ def run_ftune(args: argparse.Namespace) -> None:
 def run_predict(args: argparse.Namespace) -> None:
     if args.model is not None:
         logger.info("Loading specified model checkpoint from: %s", args.model)
-        predictor = SLMPredictor.from_checkpoint(
+        model = SLMBase.from_checkpoint(
             checkpoint_dir=args.model,
             prompts_config_path=args.prompts_config,
-            chat_template_config_path=args.chat_template,
         )
     else:
         logger.info(
@@ -255,21 +256,21 @@ def run_predict(args: argparse.Namespace) -> None:
             args.models_dir,
             args.metric,
         )
-        predictor, best_checkpoint, best_card = SLMPredictor.from_best_model(
+        model = SLMBase.from_best_model(
             models_dir=args.models_dir,
             model_type=args.mode,
             metric=args.metric,
             prompts_config_path=args.prompts_config,
-            chat_template_config_path=args.chat_template,
         )
+        best_card = model.metadata.get("model_card", {})
         logger.info(
             "Loaded best model from: %s (as of %s)",
-            best_checkpoint,
+            model.metadata.get("checkpoint_dir", "N/A"),
             best_card.get("as_of", "N/A"),
         )
 
     logger.info("Predicting on data: '%s'...", args.data)
-    output_files = predictor.predict_file_or_dir(
+    output_files = model.predict_file_or_dir(
         data_path=args.data,
         output_dir=args.output_dir,
         batch_size=args.batch_size,
@@ -281,6 +282,14 @@ def run_predict(args: argparse.Namespace) -> None:
 
 def main() -> None:
     args_list = sys.argv[1:]
+
+    # Delegate 'mlflow' subcommand directly to tracking CLI handler
+    if args_list and args_list[0] == "mlflow":
+        if len(args_list) == 1:
+            print(get_mlflow_help_table())
+            sys.exit(0)
+        sys.exit(handle_mlflow_cli(args_list[1:]))
+
     is_help = any(arg in ("-h", "--help", "help") for arg in args_list)
 
     if is_help:
@@ -289,6 +298,9 @@ def main() -> None:
             sys.exit(0)
         elif "predict" in args_list:
             print(get_predict_help_table())
+            sys.exit(0)
+        elif "mlflow" in args_list:
+            print(get_mlflow_help_table())
             sys.exit(0)
         else:
             print(get_combined_help_tables())
@@ -306,6 +318,8 @@ def main() -> None:
         run_ftune(args)
     elif args.subcommand == "predict":
         run_predict(args)
+    elif args.subcommand == "mlflow":
+        print(get_mlflow_help_table())
     elif args.subcommand == "info":
         logger.info("=== easySLM System Information ===")
         print_cuda_info()

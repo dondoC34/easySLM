@@ -1,8 +1,6 @@
-import ast
-import json
 import logging
-import re
 from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 import torch
@@ -18,6 +16,8 @@ from sklearn.metrics import (
 )
 from transformers import EvalPrediction, PreTrainedTokenizerBase
 
+from src.slm.json_slm import SLMJson
+
 logger = logging.getLogger(__name__)
 
 
@@ -26,9 +26,9 @@ def compute_classification_metrics(
     y_pred: np.ndarray,
     multi_label: bool = True,
 ) -> dict[str, float]:
-    """
-    Computes classification metrics given binary indicator matrices
-    `y_true` and `y_pred` of shape `(num_samples, num_classes)`.
+    """Computes classification metrics given binary indicator matrices `y_true` and `y_pred`
+
+    of shape `(num_samples, num_classes)`.
 
     Metrics computed:
     - `accuracy` & `exact_match_accuracy`: top-1 / subset accuracy.
@@ -89,39 +89,51 @@ def compute_classification_metrics(
     return metrics
 
 
+def extract_cls_binary_arrays(
+    logits: Any,
+    labels: Any,
+    multi_label: bool = True,
+    threshold: float = 0.5,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Converts raw model logits and ground truth label_ids into binary indicator matrices `(y_true, y_pred)`."""
+    if isinstance(logits, tuple):
+        logits = logits[0]
+    logits = np.asarray(logits, dtype=np.float32)
+    labels = np.asarray(labels)
+
+    num_classes = logits.shape[-1]
+
+    if multi_label:
+        probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -50.0, 50.0)))
+        y_pred = (probs >= threshold).astype(np.int32)
+        y_true = (labels >= 0.5).astype(np.int32)
+    else:
+        pred_indices = np.argmax(logits, axis=-1)
+        y_pred = np.zeros((len(pred_indices), num_classes), dtype=np.int32)
+        y_pred[np.arange(len(pred_indices)), pred_indices] = 1
+
+        if labels.ndim > 1 and labels.shape[-1] == num_classes:
+            y_true = (labels >= 0.5).astype(np.int32)
+        else:
+            y_true = np.zeros((len(labels), num_classes), dtype=np.int32)
+            y_true[np.arange(len(labels)), labels.astype(np.int64)] = 1
+
+    return y_true, y_pred
+
+
 def build_cls_compute_metrics(
     multi_label: bool = True,
     threshold: float = 0.5,
 ) -> Callable[[EvalPrediction], dict[str, float]]:
-    """
-    Builds a `compute_metrics` callable for Hugging Face `Trainer` in `SLMCls` mode.
-    """
+    """Builds a `compute_metrics` callable for Hugging Face `Trainer` in `SLMCls` mode."""
 
     def compute_metrics(eval_pred: EvalPrediction) -> dict[str, float]:
-        logits = eval_pred.predictions
-        if isinstance(logits, tuple):
-            logits = logits[0]
-        logits = np.asarray(logits, dtype=np.float32)
-        labels = np.asarray(eval_pred.label_ids)
-
-        num_classes = logits.shape[-1]
-
-        if multi_label:
-            # Sigmoid activation + threshold
-            probs = 1.0 / (1.0 + np.exp(-np.clip(logits, -50.0, 50.0)))
-            y_pred = (probs >= threshold).astype(np.int32)
-            y_true = (labels >= 0.5).astype(np.int32)
-        else:
-            # Softmax / Argmax for single-label
-            pred_indices = np.argmax(logits, axis=-1)
-            y_pred = np.zeros((len(pred_indices), num_classes), dtype=np.int32)
-            y_pred[np.arange(len(pred_indices)), pred_indices] = 1
-
-            if labels.ndim > 1 and labels.shape[-1] == num_classes:
-                y_true = (labels >= 0.5).astype(np.int32)
-            else:
-                y_true = np.zeros((len(labels), num_classes), dtype=np.int32)
-                y_true[np.arange(len(labels)), labels.astype(np.int64)] = 1
+        y_true, y_pred = extract_cls_binary_arrays(
+            logits=eval_pred.predictions,
+            labels=eval_pred.label_ids,
+            multi_label=multi_label,
+            threshold=threshold,
+        )
 
         metrics = compute_classification_metrics(y_true, y_pred, multi_label=multi_label)
         logger.info(
@@ -140,8 +152,8 @@ def preprocess_logits_for_json_metrics(
     logits: torch.Tensor | tuple[torch.Tensor, ...],
     labels: torch.Tensor,
 ) -> torch.Tensor:
-    """
-    Reduces CausalLM logits from `(batch_size, seq_len, vocab_size)` to `(batch_size, seq_len)`
+    """Reduces CausalLM logits from `(batch_size, seq_len, vocab_size)` to `(batch_size, seq_len)`
+
     token IDs via `argmax(dim=-1)` immediately on GPU during evaluation to save VRAM.
     """
     if isinstance(logits, tuple):
@@ -153,26 +165,66 @@ def _parse_class_list_string(
     raw_text: str,
     class_to_idx: dict[str, int],
 ) -> tuple[list[str], bool]:
-    """
-    Parses a decoded string (e.g. `"['economy', 'politics']"`) into a sorted list of valid classes
+    """Parses a decoded string (e.g. `"['economy', 'politics']"`) into a sorted list of valid classes
+
     and a boolean flag indicating whether a bracketed list was successfully parsed.
     """
-    text = raw_text.strip()
-    match = re.search(r"\[.*?\]", text, flags=re.DOTALL)
-    candidate = match.group(0) if match else text
+    return SLMJson.parse_class_list(raw_text, class_to_idx)
 
-    parsed = None
-    for parser in (json.loads, ast.literal_eval):
-        try:
-            parsed = parser(candidate)
-            break
-        except Exception:
-            continue
 
-    if isinstance(parsed, list):
-        valid = sorted(list(dict.fromkeys(str(x) for x in parsed if str(x) in class_to_idx)))
-        return valid, True
-    return [], False
+def extract_json_binary_arrays(
+    pred_ids: Any,
+    label_ids: Any,
+    tokenizer: PreTrainedTokenizerBase,
+    classes: Sequence[str],
+) -> tuple[np.ndarray, np.ndarray, int, int, int]:
+    """Decodes token sequences and parses JSON class lists into `(y_true, y_pred, correct_tokens, total_tokens, valid_json_count)`."""
+    sorted_classes = sorted(list(dict.fromkeys(classes)))
+    class_to_idx = {c: i for i, c in enumerate(sorted_classes)}
+    num_classes = len(sorted_classes)
+
+    if isinstance(pred_ids, tuple):
+        pred_ids = pred_ids[0]
+    pred_ids = np.asarray(pred_ids)
+    if pred_ids.ndim == 3:
+        pred_ids = np.argmax(pred_ids, axis=-1)
+
+    label_ids = np.asarray(label_ids)
+
+    shift_preds = pred_ids[:, :-1]
+    shift_labels = label_ids[:, 1:]
+
+    num_samples = shift_labels.shape[0]
+    y_true = np.zeros((num_samples, num_classes), dtype=np.int32)
+    y_pred = np.zeros((num_samples, num_classes), dtype=np.int32)
+
+    total_tokens = 0
+    correct_tokens = 0
+    valid_json_count = 0
+
+    for i in range(num_samples):
+        mask = shift_labels[i] != -100
+        sample_true_ids = shift_labels[i][mask]
+        sample_pred_ids = shift_preds[i][mask]
+
+        total_tokens += len(sample_true_ids)
+        correct_tokens += int(np.sum(sample_true_ids == sample_pred_ids))
+
+        true_str = str(tokenizer.decode(sample_true_ids.tolist(), skip_special_tokens=True))
+        pred_str = str(tokenizer.decode(sample_pred_ids.tolist(), skip_special_tokens=True))
+
+        true_classes, _ = _parse_class_list_string(true_str, class_to_idx)
+        pred_classes, is_valid_json = _parse_class_list_string(pred_str, class_to_idx)
+
+        if is_valid_json:
+            valid_json_count += 1
+
+        for c in true_classes:
+            y_true[i, class_to_idx[c]] = 1
+        for c in pred_classes:
+            y_pred[i, class_to_idx[c]] = 1
+
+    return y_true, y_pred, correct_tokens, total_tokens, valid_json_count
 
 
 def build_json_compute_metrics(
@@ -180,8 +232,7 @@ def build_json_compute_metrics(
     classes: Sequence[str],
     multi_label: bool = True,
 ) -> Callable[[EvalPrediction], dict[str, float]]:
-    """
-    Builds a `compute_metrics` callable for Hugging Face `Trainer` in `SLMJson` mode.
+    """Builds a `compute_metrics` callable for Hugging Face `Trainer` in `SLMJson` mode.
 
     Computes both:
     1. `token_accuracy`: next-token prediction accuracy strictly on the unmasked assistant tokens.
@@ -189,54 +240,22 @@ def build_json_compute_metrics(
        the predicted assistant tokens vs target assistant tokens and parsing the JSON class lists.
     """
     sorted_classes = sorted(list(dict.fromkeys(classes)))
-    class_to_idx = {c: i for i, c in enumerate(sorted_classes)}
-    num_classes = len(sorted_classes)
 
     def compute_metrics(eval_pred: EvalPrediction) -> dict[str, float]:
-        pred_ids = eval_pred.predictions
-        if isinstance(pred_ids, tuple):
-            pred_ids = pred_ids[0]
-        pred_ids = np.asarray(pred_ids)
-        # If raw 3D logits were passed without preprocess_logits_for_json_metrics
-        if pred_ids.ndim == 3:
-            pred_ids = np.argmax(pred_ids, axis=-1)
+        (
+            y_true,
+            y_pred,
+            correct_tokens,
+            total_tokens,
+            valid_json_count,
+        ) = extract_json_binary_arrays(
+            pred_ids=eval_pred.predictions,
+            label_ids=eval_pred.label_ids,
+            tokenizer=tokenizer,
+            classes=sorted_classes,
+        )
 
-        label_ids = np.asarray(eval_pred.label_ids)
-
-        # Causal shift alignment: token at index t predicts token at index t + 1
-        shift_preds = pred_ids[:, :-1]
-        shift_labels = label_ids[:, 1:]
-
-        num_samples = shift_labels.shape[0]
-        y_true = np.zeros((num_samples, num_classes), dtype=np.int32)
-        y_pred = np.zeros((num_samples, num_classes), dtype=np.int32)
-
-        total_tokens = 0
-        correct_tokens = 0
-        valid_json_count = 0
-
-        for i in range(num_samples):
-            mask = shift_labels[i] != -100
-            sample_true_ids = shift_labels[i][mask]
-            sample_pred_ids = shift_preds[i][mask]
-
-            total_tokens += len(sample_true_ids)
-            correct_tokens += int(np.sum(sample_true_ids == sample_pred_ids))
-
-            true_str = str(tokenizer.decode(sample_true_ids.tolist(), skip_special_tokens=True))
-            pred_str = str(tokenizer.decode(sample_pred_ids.tolist(), skip_special_tokens=True))
-
-            true_classes, _ = _parse_class_list_string(true_str, class_to_idx)
-            pred_classes, is_valid_json = _parse_class_list_string(pred_str, class_to_idx)
-
-            if is_valid_json:
-                valid_json_count += 1
-
-            for c in true_classes:
-                y_true[i, class_to_idx[c]] = 1
-            for c in pred_classes:
-                y_pred[i, class_to_idx[c]] = 1
-
+        num_samples = len(y_true)
         metrics = compute_classification_metrics(y_true, y_pred, multi_label=multi_label)
         metrics["token_accuracy"] = float(correct_tokens / max(total_tokens, 1))
         metrics["json_valid_parse_rate"] = float(valid_json_count / max(num_samples, 1))

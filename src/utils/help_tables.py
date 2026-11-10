@@ -4,7 +4,7 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
     (
         "--model",
         "str (default: 'Qwen/Qwen2.5-0.5B')",
-        "Hugging Face model ID or path to local model snapshot.",
+        "Hugging Face model ID. Examples: 'Qwen/Qwen2.5-0.5B', 'Qwen/Qwen2.5-1.5B', 'meta-llama/Llama-3.2-1B', 'google/gemma-2-2b'.",
     ),
     (
         "--type",
@@ -15,6 +15,11 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
         "--data",
         "path (default: 'data/sample_news.txt')",
         "Path to dataset file (.txt) or directory containing .txt files.",
+    ),
+    (
+        "--val-data",
+        "path (default: None)",
+        "Optional path to separate validation dataset (.txt file or directory). If omitted, 15% is randomly split from training data.",
     ),
     (
         "--output-dir",
@@ -30,11 +35,6 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
         "--prompts-config",
         "path (default: 'configs/prompts.yml')",
         "Path to YAML prompts configuration file.",
-    ),
-    (
-        "--chat-template",
-        "path (default: 'configs/chat_template.yml')",
-        "Path to YAML Jinja2 chat template configuration.",
     ),
     ("--epochs", "float (default: 3.0)", "Total training epochs (overrides config value)."),
     ("--batch-size", "int (default: 2)", "Per-device training batch size."),
@@ -108,10 +108,66 @@ PREDICT_OPTIONS: list[tuple[str, str, str]] = [
         "path (default: 'configs/prompts.yml')",
         "Path to YAML prompts configuration file.",
     ),
+]
+
+MODEL_EXAMPLES: list[tuple[str, str, str]] = [
     (
-        "--chat-template",
-        "path (default: 'configs/chat_template.yml')",
-        "Path to YAML Jinja2 chat template configuration.",
+        "Qwen/Qwen2.5-0.5B",
+        "0.5B (Default)",
+        "Ultra-lightweight, multilingual (29+ langs), runs in < 2 GB VRAM.",
+    ),
+    (
+        "Qwen/Qwen2.5-1.5B",
+        "1.5B",
+        "Higher capacity multilingual SLM, great accuracy/speed balance (< 4 GB VRAM).",
+    ),
+    (
+        "meta-llama/Llama-3.2-1B",
+        "1.2B",
+        "Meta compact SLM, excellent English generalist with 128k context window.",
+    ),
+    (
+        "google/gemma-2-2b",
+        "2.6B",
+        "Google Gemma 2 architecture with sliding-window attention (< 6 GB VRAM).",
+    ),
+    (
+        "HuggingFaceTB/SmolLM2-1.7B",
+        "1.7B",
+        "High-efficiency reasoning SLM trained on curated synthetic data (< 4 GB VRAM).",
+    ),
+]
+
+MLFLOW_COMMANDS: list[tuple[str, str, str]] = [
+    (
+        "start (run)",
+        "easyslm mlflow start [OPTIONS]",
+        "Start MLflow tracking server and Web UI dashboard (--host, --port, --backend-store-uri).",
+    ),
+    (
+        "status",
+        "easyslm mlflow status [OPTIONS]",
+        "Probe server health, database size, and storage diagnostics (--host, --port).",
+    ),
+    (
+        "list (runs)",
+        "easyslm mlflow list [OPTIONS]",
+        "List recent training runs with metrics, epochs, and status (--sort-by, --limit, --model).",
+    ),
+    (
+        "best",
+        "easyslm mlflow best [OPTIONS]",
+        "Display details of best run by metric and optionally export artifacts (--metric, --export-to).",
+    ),
+    (
+        "clear (clean)",
+        "easyslm mlflow clear [OPTIONS]",
+        "Clear MLflow database records and/or artifact files (-y, --artifacts-only).",
+    ),
+    (
+        "ui (open)",
+        "easyslm mlflow ui [OPTIONS]",
+        "Open the MLflow Web dashboard in default browser.",
     ),
 ]
 
@@ -120,6 +176,7 @@ def render_table(
     title: str,
     subtitle: str,
     rows: list[tuple[str, str, str]],
+    headers: tuple[str, str, str] = ("Parameter", "Type / Default", "Description"),
     w_param: int = 20,
     w_type: int = 30,
     w_desc: int = 50,
@@ -127,9 +184,7 @@ def render_table(
     """Renders a clean ASCII table for CLI parameter documentation (100% compatible across OS / code pages)."""
     h_sep = f"+{'-' * (w_param + 2)}+{'-' * (w_type + 2)}+{'-' * (w_desc + 2)}+"
 
-    header_line = (
-        f"| {'Parameter':<{w_param}} | {'Type / Default':<{w_type}} | {'Description':<{w_desc}} |"
-    )
+    header_line = f"| {headers[0]:<{w_param}} | {headers[1]:<{w_type}} | {headers[2]:<{w_desc}} |"
 
     table_lines: list[str] = [
         "",
@@ -161,16 +216,29 @@ def render_table(
     table_lines.append(h_sep)
     table_lines.append("")
     return "\n".join(table_lines)
-    return "\n".join(table_lines)
+
+
+def get_model_examples_table() -> str:
+    """Generates the formatted table for recommended base SLMs."""
+    return render_table(
+        title="RECOMMENDED BASE SLM MODELS (HUGGING FACE IDS)",
+        subtitle="Popular Small Language Models compatible with easySLM (LoRA supported, runnable on consumer GPUs):",
+        rows=MODEL_EXAMPLES,
+        headers=("Model ID (Hugging Face)", "Size / VRAM", "Description"),
+        w_param=28,
+        w_type=18,
+        w_desc=54,
+    )
 
 
 def get_ftune_help_table() -> str:
     """Generates the formatted table for `easyslm ftune`."""
-    return render_table(
+    ftune_table = render_table(
         title="COMMAND: easyslm ftune",
         subtitle="Fine-tunes a Small Language Model (SLM) for Direct ('cls') or Generative ('json') classification.",
         rows=FTUNE_OPTIONS,
     )
+    return ftune_table + "\n" + get_model_examples_table()
 
 
 def get_predict_help_table() -> str:
@@ -182,8 +250,21 @@ def get_predict_help_table() -> str:
     )
 
 
+def get_mlflow_help_table() -> str:
+    """Generates the formatted table for `easyslm mlflow`."""
+    return render_table(
+        title="COMMAND: easyslm mlflow",
+        subtitle="Manage MLflow experiment tracking server, runs, metrics, and storage.",
+        rows=MLFLOW_COMMANDS,
+        headers=("Subcommand", "Syntax", "Description"),
+        w_param=16,
+        w_type=34,
+        w_desc=50,
+    )
+
+
 def get_combined_help_tables() -> str:
-    """Generates the combined tables for both `ftune` and `predict`."""
+    """Generates the combined tables for ftune, predict, and mlflow."""
     banner = [
         "==========================================================================================================",
         "                                     easySLM CLI - PARAMETER REFERENCE                                    ",
@@ -191,8 +272,17 @@ def get_combined_help_tables() -> str:
         "Usage:",
         "  easyslm ftune [OPTIONS]      Run fine-tuning with PEFT (LoRA), HF Trainer, and MLflow",
         "  easyslm predict [OPTIONS]    Run batch inference (with optional automatic best-model selection)",
+        "  easyslm mlflow [COMMAND]     Manage MLflow tracking server, runs, metrics, and storage",
         "  easyslm info                 Display CUDA and GPU system diagnostics",
         "",
-        "Run 'easyslm ftune --help' or 'easyslm predict --help' to inspect an individual command.",
+        "Run 'easyslm <command> --help' to inspect an individual command.",
     ]
-    return "\n".join(banner) + "\n" + get_ftune_help_table() + "\n" + get_predict_help_table()
+    return (
+        "\n".join(banner)
+        + "\n"
+        + get_ftune_help_table()
+        + "\n"
+        + get_predict_help_table()
+        + "\n"
+        + get_mlflow_help_table()
+    )

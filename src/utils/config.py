@@ -6,16 +6,6 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
-# Fallback default ChatML template in case config YAML is missing
-DEFAULT_FALLBACK_CHATML_TEMPLATE = (
-    "{% for message in messages %}"
-    "{{ '<|im_start|>' + message['role'] + '\n' + message['content'] + '<|im_end|>' + '\n' }}"
-    "{% endfor %}"
-    "{% if add_generation_prompt %}"
-    "{{ '<|im_start|>assistant\n' }}"
-    "{% endif %}"
-)
-
 
 def get_project_root() -> Path:
     """Returns the absolute path to the project root directory."""
@@ -37,42 +27,6 @@ def load_yaml(file_path: str | Path) -> dict[str, Any]:
     return data
 
 
-def load_chat_template(
-    config_path: str | Path = "configs/chat_template.yml",
-    template_name: str | None = None,
-) -> str:
-    """
-    Loads a Jinja2 chat template from the specified YAML configuration file.
-
-    Args:
-        config_path: Path to the chat template YAML file (relative to project root or absolute).
-        template_name: Name of the template key under 'templates'. If None, uses 'default_template_name'.
-
-    Returns:
-        The Jinja2 template string.
-    """
-    try:
-        data = load_yaml(config_path)
-        selected_name = template_name or data.get("default_template_name", "chatml")
-        templates = data.get("templates", {})
-        template = templates.get(selected_name)
-        if template:
-            return template.strip()
-        logger.warning(
-            "Template '%s' not found in %s. Using default fallback template.",
-            selected_name,
-            config_path,
-        )
-    except Exception as e:
-        logger.warning(
-            "Could not load chat template from '%s' (%s). Using default fallback template.",
-            config_path,
-            e,
-        )
-
-    return DEFAULT_FALLBACK_CHATML_TEMPLATE
-
-
 DEFAULT_PROMPTS_CONFIG = {
     "mode_descriptions": {
         "multi_label": "one or more applicable classes (multi-label)",
@@ -84,6 +38,7 @@ DEFAULT_PROMPTS_CONFIG = {
             "Classify the user text into {mode_desc} from the following valid classes: [{classes}]."
         ),
         "user_prompt": "{text}",
+        "prompt_template": "{system_prompt}\n\nText: {user_prompt}",
     },
     "json": {
         "system_prompt": (
@@ -93,6 +48,7 @@ DEFAULT_PROMPTS_CONFIG = {
             "for example: {example}. Do not output any additional text or explanation."
         ),
         "user_prompt": "{text}",
+        "prompt_template": "{system_prompt}\n\nText: {user_prompt}\nLabels:\n",
     },
 }
 

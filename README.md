@@ -16,12 +16,12 @@ Designed specifically for developer efficiency and constrained hardware, easySLM
 
 - **Dual Architecture Modes**:
   - **Direct Classification (`cls`)**: Extracts sequence embeddings from the SLM backbone via customizable pooling (`eos`, `mean`, `max`) and feeds them into a custom classification head (`nn.Linear`). Fast, deterministic, and accurate.
-  - **Generative Classification (`json`)**: Instructs a Causal Language Model via Jinja2 chat templates to autoregressively output structured, sorted JSON lists of predicted classes (e.g. `['economy', 'technology']`).
+  - **Generative Classification (`json`)**: Instructs a Causal Language Model via structured plain-text prompts to autoregressively output sorted JSON lists of predicted classes (e.g. `['economy', 'technology']`) terminated by the model's native EOS token.
 - **Single-Label & Multi-Label Support**:
   - Full support for multi-label tagging (BCEWithLogitsLoss / Sigmoid) and single-label multiclass classification (CrossEntropyLoss / Softmax).
   - Strict eager validation: automatically validates dataset consistency when `--single-label` is enabled, pinpointing file and line errors immediately.
 - **Config-Driven Architecture**:
-  - Prompt templates (`configs/prompts.yml`), Jinja2 chat templates (`configs/chat_template.yml`), and training hyperparameters (`configs/training_config.yml`) are fully decoupled into documented YAML files.
+  - Prompt templates (`configs/prompts.yml`) and training hyperparameters (`configs/training_config.yml`) are fully decoupled into documented YAML files.
 - **Automated Model Cards**:
   - Every fine-tuning run automatically documents its results in a Markdown **Model Card** (`model_card_{model}_{type}_{timestamp}.md`) with structured YAML frontmatter, hyperparameter snapshots, and metrics tables with human-readable explanations.
 - **Automated "Best Model" Inference**:
@@ -38,8 +38,7 @@ Designed specifically for developer efficiency and constrained hardware, easySLM
 ```text
 easySLM/
 ├── configs/
-│   ├── chat_template.yml          # Jinja2 chat templates (ChatML, Llama-3, etc.)
-│   ├── prompts.yml                # System and user prompt templates for CLS and JSON
+│   ├── prompts.yml                # System, user, and full prompt templates for CLS and JSON
 │   └── training_config.yml        # Hyperparameters and Hugging Face Trainer configuration
 ├── data/
 │   ├── sample_news.txt            # Multi-label dataset (210 samples, 6 classes)
@@ -52,10 +51,9 @@ easySLM/
 ├── src/
 │   ├── cli.py                     # CLI commands (`ftune`, `predict`, `info`)
 │   ├── data/                      # Dataset loaders, parsers (base_dataset.py), and collators
-│   ├── slm/                       # SLMBase, SLMCls, SLMJson, ModelFactory, serialization
+│   ├── slm/                       # SLMBase, SLMCls, SLMJson, ModelFactory, serialization & inference
 │   ├── fine_tuning.py             # SLMFineTuner with HF Trainer & MLflow
 │   ├── evaluation.py              # Metric computation (Accuracy, F1, MCC, Cohen's Kappa, etc.)
-│   ├── inference.py               # SLMPredictor for single-text and batch file prediction
 │   └── utils/                     # Model card generator, help tables, CUDA diagnostics
 ├── main.py                        # Entrypoint alias
 ├── mlflow.db                      # Local SQLite database for MLflow experiment tracking
@@ -121,7 +119,16 @@ uv run easyslm predict --help
 
 ### 1. Fine-Tuning: `easyslm ftune`
 
-Fine-tune any Hugging Face model using PEFT LoRA and Hugging Face Trainer:
+Fine-tune any compatible Hugging Face Small Language Model (SLM) using PEFT LoRA and Hugging Face Trainer.
+
+#### Recommended Base Models
+| Hugging Face Model ID | Parameters / VRAM | Highlights |
+| :--- | :--- | :--- |
+| `Qwen/Qwen2.5-0.5B` | 0.5B (< 2 GB) | Default model, multilingual (29+ languages), ultra-fast training |
+| `Qwen/Qwen2.5-1.5B` | 1.5B (< 4 GB) | High capacity multilingual SLM, great accuracy/speed balance |
+| `meta-llama/Llama-3.2-1B` | 1.2B (< 3 GB) | Meta compact generalist with 128k context window |
+| `google/gemma-2-2b` | 2.6B (< 6 GB) | Google Gemma 2 architecture with sliding-window attention |
+| `HuggingFaceTB/SmolLM2-1.7B` | 1.7B (< 4 GB) | Compact reasoning SLM trained on curated synthetic data |
 
 ```bash
 # Direct Classification (CLS mode) with LoRA on multi-label data
@@ -191,7 +198,34 @@ Predictions are written to the target directory in two formats:
 - `<filename>_predictions_<type>.txt`: Plain text with `<text> ||| <predicted_labels>`
 - `<filename>_predictions_<type>.json`: Structured JSON containing predictions, class probability distributions, and raw generation outputs (for JSON mode).
 
-### 3. Hardware Diagnostics: `easyslm info`
+### 3. MLflow Tracking: `easyslm mlflow`
+
+easySLM includes a built-in suite to manage the MLflow tracking server, query runs, inspect storage diagnostics, and open the web dashboard:
+
+```bash
+# Display command reference and available subcommands
+uv run easyslm mlflow
+
+# Check server status, database size, and experiment summary
+uv run easyslm mlflow status
+
+# List recent training runs with metrics and status
+uv run easyslm mlflow list --limit 10 --sort-by f1
+
+# Display details of the best performing run (and optionally export artifacts)
+uv run easyslm mlflow best --metric eval_f1_macro --export-to ./best_model_export
+
+# Launch the official MLflow Web UI server
+uv run easyslm mlflow start --port 5000
+
+# Open the Web UI dashboard in your default browser
+uv run easyslm mlflow ui
+
+# Clean database records or artifacts
+uv run easyslm mlflow clear --artifacts-only
+```
+
+### 4. Hardware Diagnostics: `easyslm info`
 
 Inspect your local CUDA setup, GPU name, VRAM availability, and PyTorch configuration:
 
@@ -238,7 +272,7 @@ Open [http://localhost:5000](http://localhost:5000) in your browser.
 You can also use easySLM programmatically within your own scripts:
 
 ```python
-from src import FineTuningConfig, SLMFineTuner, SLMPredictor
+from src import FineTuningConfig, SLMBase, SLMFineTuner
 
 # 1. Fine-tuning programmatically
 config = FineTuningConfig(
@@ -255,12 +289,12 @@ tuner = SLMFineTuner(model_name="Qwen/Qwen2.5-0.5B", config=config)
 tuner.train(train_data_path="data/sample_news_single_label_train.txt")
 
 # 2. Inference programmatically
-predictor, checkpoint_path, card = SLMPredictor.from_best_model(
+model = SLMBase.from_best_model(
     models_dir="./models/finetuned",
     model_type="cls",
     metric="eval_accuracy",
 )
-results = predictor.predict_texts(
+results = model.predict_texts(
     [
         "The central bank lowered benchmark interest rates by 25 basis points.",
         "A star striker completed a record-breaking transfer to join the championship squad.",
@@ -275,8 +309,7 @@ for r in results:
 ## Configuration Files
 
 - `configs/training_config.yml`: Controls learning rate, scheduler (`cosine`, `linear`), warmup ratio, weight decay, batch sizes, LoRA rank/alpha, and gradient checkpointing.
-- `configs/prompts.yml`: System prompts and user prompt templates for direct (`cls`) and generative (`json`) modes.
-- `configs/chat_template.yml`: Jinja2 formatting template matching the backbone model's chat format (default is ChatML).
+- `configs/prompts.yml`: System prompts, user prompt templates, and full prompt structures for direct (`cls`) and generative (`json`) modes.
 
 ---
 

@@ -1,4 +1,5 @@
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any, Literal
 
 import torch
@@ -31,6 +32,7 @@ class SLMCls(SLMBase):
         * `multi_label=True` (multi-label): `nn.BCEWithLogitsLoss` + `sigmoid` at inference (no softmax).
     """
 
+    TASK_MODE: Literal["cls", "json"] = "cls"
     VALID_POOLING_STRATEGIES = ("eos", "mean", "max")
 
     def __init__(
@@ -40,6 +42,10 @@ class SLMCls(SLMBase):
         multi_label: bool = True,
         pooling_strategy: PoolingStrategy = "eos",
         dropout: float = 0.1,
+        tokenizer: PreTrainedTokenizerBase | None = None,
+        prompts_config_path: str | Path = "configs/prompts.yml",
+        max_length: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ):
         if pooling_strategy not in self.VALID_POOLING_STRATEGIES:
             raise ValueError(
@@ -52,6 +58,10 @@ class SLMCls(SLMBase):
             backbone=backbone,
             classes=classes,
             multi_label=multi_label,
+            tokenizer=tokenizer,
+            prompts_config_path=prompts_config_path,
+            max_length=max_length,
+            metadata=metadata,
         )
 
         hidden_size = getattr(self.backbone.config, "hidden_size", None)
@@ -78,22 +88,27 @@ class SLMCls(SLMBase):
         multi_label: bool = True,
         pooling_strategy: PoolingStrategy = "eos",
         dropout: float = 0.1,
+        prompts_config_path: str | Path = "configs/prompts.yml",
+        max_length: int | None = None,
         factory: ModelFactory | None = None,
         **model_kwargs,
-    ) -> tuple["SLMCls", PreTrainedTokenizerBase]:
+    ) -> "SLMCls":
         """
-        Instantiates `SLMCls` and returns `(model, tokenizer)` using `ModelFactory`.
+        Instantiates `SLMCls` (with `model.tokenizer` attached) using `ModelFactory`.
         """
         factory = factory or ModelFactory()
         backbone, tokenizer = factory.get_backbone(model_name, **model_kwargs)
-        model = cls(
+        return cls(
             backbone=backbone,
             classes=classes,
             multi_label=multi_label,
             pooling_strategy=pooling_strategy,
             dropout=dropout,
+            tokenizer=tokenizer,
+            prompts_config_path=prompts_config_path,
+            max_length=max_length,
+            metadata={"base_model_name": model_name, "mode": "cls"},
         )
-        return model, tokenizer
 
     def pool_hidden_states(
         self,
@@ -196,13 +211,15 @@ class SLMCls(SLMBase):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         threshold: float = 0.5,
+        fallback_top1: bool = True,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """
         Runs classification inference on tokenized `(input_ids, attention_mask)` tensors.
 
         - When `multi_label=False`: applies `softmax` over logits and selects `argmax` into a 0/1 vector.
-        - When `multi_label=True`: applies `sigmoid` over logits (no softmax) and thresholds into a 0/1 vector.
+        - When `multi_label=True`: applies `sigmoid` over logits (no softmax) and thresholds into a 0/1 vector
+          (with optional `fallback_top1` if no class exceeds `threshold`).
         """
         was_training = self.training
         self.eval()
@@ -216,6 +233,15 @@ class SLMCls(SLMBase):
         if self.multi_label:
             probabilities = torch.sigmoid(logits)
             binary_vectors = (probabilities >= threshold).long()
+            if fallback_top1:
+                empty_mask = binary_vectors.sum(dim=-1) == 0
+                if empty_mask.any():
+                    top_indices = probabilities.argmax(dim=-1, keepdim=True)
+                    fallback_vecs = torch.zeros_like(binary_vectors)
+                    fallback_vecs.scatter_(1, top_indices, 1)
+                    binary_vectors = torch.where(
+                        empty_mask.unsqueeze(-1), fallback_vecs, binary_vectors
+                    )
         else:
             probabilities = torch.softmax(logits, dim=-1)
             top_indices = probabilities.argmax(dim=-1, keepdim=True)

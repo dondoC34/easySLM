@@ -8,7 +8,6 @@ from src.evaluation import (
     preprocess_logits_for_json_metrics,
 )
 from src.fine_tuning import FineTuningConfig, SLMFineTuner, apply_lora_to_model
-from src.inference import SLMPredictor
 from src.slm import (
     ModelFactory,
     PoolingStrategy,
@@ -18,7 +17,7 @@ from src.slm import (
     load_finetuned_model,
     save_finetuned_model,
 )
-from src.utils.config import get_project_root, load_chat_template, load_prompts_config, load_yaml
+from src.utils.config import get_project_root, load_prompts_config, load_yaml
 from src.utils.device import get_default_device, get_default_dtype, print_cuda_info
 from src.utils.model_card import find_best_model
 
@@ -35,7 +34,6 @@ __all__ = [
     "SLMFineTuner",
     "SLMJson",
     "SLMJsonDataset",
-    "SLMPredictor",
     "apply_lora_to_model",
     "build_cls_compute_metrics",
     "build_json_compute_metrics",
@@ -44,7 +42,6 @@ __all__ = [
     "get_default_device",
     "get_default_dtype",
     "get_project_root",
-    "load_chat_template",
     "load_finetuned_model",
     "load_prompts_config",
     "load_yaml",

@@ -23,7 +23,6 @@ from src.evaluation import (
     preprocess_logits_for_json_metrics,
 )
 from src.slm import ModelFactory, PoolingStrategy, SLMBase, SLMCls, SLMJson
-from src.slm.serialization import save_finetuned_model
 from src.utils.config import get_project_root, load_yaml
 from src.utils.model_card import clean_slug
 
@@ -67,9 +66,8 @@ class FineTuningConfig:
     max_grad_norm: float = 1.0
     num_train_epochs: float = 3.0
 
-    # Prompt and template configurations
+    # Prompt configuration
     prompts_config_path: str = "configs/prompts.yml"
-    chat_template_config_path: str = "configs/chat_template.yml"
 
     # Evaluation & Checkpointing
     eval_strategy: str = "steps"
@@ -82,8 +80,9 @@ class FineTuningConfig:
 
     # MLflow Integration
     use_mlflow: bool = True
-    mlflow_tracking_uri: str = "sqlite:///mlflow.db"
-    mlflow_experiment_name: str = "easySLM_finetuning"
+    mlflow_tracking_uri: str | None = None
+    mlflow_experiment_name: str | None = None
+    mlflow_config_path: str | None = None
     run_name: str | None = None
 
     @classmethod
@@ -279,13 +278,31 @@ class SLMFineTuner:
         self.tokenizer: PreTrainedTokenizerBase | None = None
         self.trainer: Trainer | None = None
         self.classes: list[str] = []
+        self.run_output_dir: Path | None = None
+
+        if self.config.use_mlflow:
+            from src.tracking.config import get_mlflow_config
+
+            self.mlflow_cfg = get_mlflow_config(self.config.mlflow_config_path)
+        else:
+            self.mlflow_cfg = {}
 
     def _configure_mlflow(self) -> list[str]:
         """Configures MLflow environment variables and returns the `report_to` list for `Trainer`."""
         if not self.config.use_mlflow:
             return ["none"]
 
-        tracking_uri = self.config.mlflow_tracking_uri
+        server_cfg = self.mlflow_cfg.get("server", {})
+        tracking_cfg = self.mlflow_cfg.get("tracking", {})
+
+        tracking_uri = self.config.mlflow_tracking_uri or server_cfg.get(
+            "backend_store_uri", "sqlite:///mlflow.db"
+        )
+        experiment_name = (
+            self.config.mlflow_experiment_name
+            or f"{tracking_cfg.get('experiment_prefix', 'easySLM')}_finetuning"
+        )
+
         # Convert relative local directory paths into clean file:// URIs or local paths for MLflow
         if not tracking_uri.startswith(("http://", "https://", "sqlite://", "file:")):
             tracking_path = Path(tracking_uri).resolve()
@@ -293,15 +310,29 @@ class SLMFineTuner:
             tracking_uri = tracking_path.as_uri()
 
         os.environ["MLFLOW_TRACKING_URI"] = tracking_uri
-        os.environ["MLFLOW_EXPERIMENT_NAME"] = self.config.mlflow_experiment_name
+        os.environ["MLFLOW_EXPERIMENT_NAME"] = experiment_name
         os.environ["MLFLOW_FLATTEN_PARAMS"] = "True"
         os.environ["MLFLOW_DISABLE_AGENT_HINT"] = "1"
         os.environ["MLFLOW_ALLOW_FILE_STORE"] = "true"
 
+        enable_system_metrics = tracking_cfg.get("system_metrics", True)
+        if enable_system_metrics:
+            os.environ["MLFLOW_ENABLE_SYSTEM_METRICS_LOGGING"] = "true"
+            interval = str(tracking_cfg.get("system_metrics_sampling_interval", 10))
+            os.environ["MLFLOW_SYSTEM_METRICS_SAMPLING_INTERVAL"] = interval
+            os.environ["MLFLOW_SYSTEM_METRICS_SAMPLES_BEFORE_LOGGING"] = "1"
+            try:
+                import mlflow
+
+                mlflow.enable_system_metrics_logging()
+            except Exception as e:
+                logger.debug("Could not enable system metrics logging: %s", e)
+
         logger.info(
-            "MLflow configured | URI: %s | Experiment: %s",
+            "MLflow configured | URI: %s | Experiment: %s | System Metrics: %s",
             tracking_uri,
-            self.config.mlflow_experiment_name,
+            experiment_name,
+            enable_system_metrics,
         )
         return ["mlflow"]
 
@@ -331,7 +362,6 @@ class SLMFineTuner:
             multi_label=self.config.multi_label,
             max_length=self.config.max_length,
             include_targets=True,
-            chat_template_config_path=self.config.chat_template_config_path,
             prompts_config_path=self.config.prompts_config_path,
         )
         self.classes = full_dataset.classes
@@ -386,24 +416,28 @@ class SLMFineTuner:
 
         model: SLMBase
         if self.config.mode == "json":
-            model, tokenizer = SLMJson.from_pretrained(
+            model = SLMJson.from_pretrained(
                 model_name=self.model_name,
                 classes=classes,
                 multi_label=self.config.multi_label,
+                prompts_config_path=self.config.prompts_config_path,
+                max_length=self.config.max_length,
                 factory=self.factory,
             )
         elif self.config.mode == "cls":
-            model, tokenizer = SLMCls.from_pretrained(
+            model = SLMCls.from_pretrained(
                 model_name=self.model_name,
                 classes=classes,
                 multi_label=self.config.multi_label,
                 pooling_strategy=self.config.pooling_strategy,
+                prompts_config_path=self.config.prompts_config_path,
+                max_length=self.config.max_length,
                 factory=self.factory,
             )
         else:
             raise ValueError(f"Unsupported mode '{self.config.mode}'. Choose 'json' or 'cls'.")
 
-        self.tokenizer = tokenizer
+        self.tokenizer = model.tokenizer
 
         if self.config.use_lora:
             model = apply_lora_to_model(model, self.config)
@@ -432,6 +466,67 @@ class SLMFineTuner:
             run_name=run_name,
         )
 
+    def evaluate(self, eval_dataset: Dataset | None = None) -> dict[str, Any]:
+        """Runs evaluation on the validation dataset using `Trainer.evaluate()`
+
+        and logs visual and tabular evaluation artifacts to MLflow and local disk.
+
+        Args:
+            eval_dataset: Optional evaluation dataset. If None, uses `self.trainer.eval_dataset`.
+
+        Returns:
+            Dictionary with evaluation metrics (e.g. `eval_loss`, `eval_f1_macro`), or empty dict.
+        """
+        if self.trainer is None:
+            raise RuntimeError("Trainer has not been initialized. Call train() first.")
+
+        dataset = eval_dataset if eval_dataset is not None else self.trainer.eval_dataset
+        if dataset is None or not isinstance(dataset, Dataset):
+            logger.info("No evaluation dataset available; skipping evaluation.")
+            return {}
+
+        logger.info(
+            "Running evaluation on validation set (%d samples)...",
+            len(dataset),  # type: ignore[arg-type]
+        )
+        metrics = self.trainer.evaluate(eval_dataset=dataset)
+        logger.info("Validation Evaluation Metrics: %s", metrics)
+
+        try:
+            pred_output = self.trainer.predict(dataset)
+            if self.config.mode == "cls":
+                from src.evaluation import extract_cls_binary_arrays
+
+                y_true, y_pred = extract_cls_binary_arrays(
+                    logits=pred_output.predictions,
+                    labels=pred_output.label_ids,
+                    multi_label=self.config.multi_label,
+                )
+            else:
+                assert self.tokenizer is not None
+                from src.evaluation import extract_json_binary_arrays
+
+                y_true, y_pred, _, _, _ = extract_json_binary_arrays(
+                    pred_ids=pred_output.predictions,
+                    label_ids=pred_output.label_ids,
+                    tokenizer=self.tokenizer,
+                    classes=self.classes,
+                )
+
+            from src.tracking.artifacts import log_evaluation_artifacts
+
+            log_evaluation_artifacts(
+                y_true=y_true,
+                y_pred=y_pred,
+                classes=self.classes,
+                multi_label=self.config.multi_label,
+                local_output_dir=self.run_output_dir,
+            )
+        except Exception as e:
+            logger.warning("Failed generating visual/tabular evaluation artifacts: %s", e)
+
+        return metrics
+
     def train(
         self,
         train_data_path: str | Path,
@@ -458,6 +553,11 @@ class SLMFineTuner:
             has_eval_dataset=eval_dataset is not None,
         )
 
+        as_of = datetime.now().strftime("%Y%m%d_%H%M%S")
+        model_slug = clean_slug(self.model_name)
+        run_output_dir = Path(self.config.output_dir) / f"{model_slug}_{self.config.mode}_{as_of}"
+        self.run_output_dir = run_output_dir
+
         assert self.tokenizer is not None
         if self.config.mode == "cls":
             compute_metrics_fn = build_cls_compute_metrics(multi_label=self.config.multi_label)
@@ -483,44 +583,33 @@ class SLMFineTuner:
         logger.info(
             "Starting fine-tuning via Hugging Face Trainer (mode=%s)...", self.config.mode.upper()
         )
+
         eval_metrics: dict[str, Any] = {}
 
         if self.config.use_mlflow:
             import mlflow
 
+            sys_metrics_enabled = self.mlflow_cfg.get("tracking", {}).get("system_metrics", True)
+
             mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
-            mlflow.set_experiment(self.config.mlflow_experiment_name)
-            with mlflow.start_run(run_name=training_args.run_name):
+            mlflow.set_experiment(os.environ["MLFLOW_EXPERIMENT_NAME"])
+            with mlflow.start_run(
+                run_name=training_args.run_name,
+                log_system_metrics=sys_metrics_enabled,
+            ):
                 train_result = self.trainer.train()
                 train_metrics = train_result.metrics
                 logger.info("Training completed | Train Metrics: %s", train_metrics)
                 log_gpu_memory("Post-training")
 
-                if eval_dataset is not None:
-                    logger.info(
-                        "Running evaluation on validation set (%d samples)...",
-                        len(eval_dataset),  # type: ignore[arg-type]
-                    )
-                    eval_metrics = self.trainer.evaluate()
-                    logger.info("Validation Evaluation Metrics: %s", eval_metrics)
+                eval_metrics = self.evaluate(eval_dataset)
         else:
             train_result = self.trainer.train()
             train_metrics = train_result.metrics
             logger.info("Training completed | Train Metrics: %s", train_metrics)
             log_gpu_memory("Post-training")
 
-            if eval_dataset is not None:
-                logger.info(
-                    "Running evaluation on validation set (%d samples)...",
-                    len(eval_dataset),  # type: ignore[arg-type]
-                )
-                eval_metrics = self.trainer.evaluate()
-                logger.info("Validation Evaluation Metrics: %s", eval_metrics)
-
-        # Save model checkpoint and Model Card
-        as_of = datetime.now().strftime("%Y%m%d_%H%M%S")
-        model_slug = clean_slug(self.model_name)
-        run_output_dir = Path(self.config.output_dir) / f"{model_slug}_{self.config.mode}_{as_of}"
+            eval_metrics = self.evaluate(eval_dataset)
 
         training_params = {
             "num_train_epochs": self.config.num_train_epochs,
@@ -536,11 +625,10 @@ class SLMFineTuner:
         }
 
         assert self.model is not None
-        checkpoint_path = save_finetuned_model(
-            model=self.model,
-            tokenizer=self.tokenizer,
+        checkpoint_path = self.model.save(
             output_dir=run_output_dir,
             base_model_name=self.model_name,
+            tokenizer=self.tokenizer,
             training_params=training_params,
             metrics=eval_metrics or train_metrics,
             as_of=as_of,

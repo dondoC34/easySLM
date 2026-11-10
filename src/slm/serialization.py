@@ -19,9 +19,9 @@ logger = logging.getLogger(__name__)
 
 def save_finetuned_model(
     model: SLMBase,
-    tokenizer: PreTrainedTokenizerBase,
     output_dir: str | Path,
     base_model_name: str,
+    tokenizer: PreTrainedTokenizerBase | None = None,
     training_params: dict[str, Any] | None = None,
     metrics: dict[str, Any] | None = None,
     as_of: str | None = None,
@@ -32,9 +32,9 @@ def save_finetuned_model(
 
     Args:
         model: Trained `SLMCls` or `SLMJson` model.
-        tokenizer: Associated tokenizer.
         output_dir: Directory where the checkpoint will be saved.
         base_model_name: Hugging Face base model identifier.
+        tokenizer: Associated tokenizer (defaults to `model.tokenizer`).
         training_params: Dictionary of training hyperparameters to document.
         metrics: Dictionary of evaluation metrics to document.
         as_of: Timestamp string (defaults to current UTC timestamp).
@@ -42,25 +42,30 @@ def save_finetuned_model(
     Returns:
         Path to the saved checkpoint directory.
     """
+    active_tokenizer = tokenizer or model.tokenizer
+    if active_tokenizer is None:
+        raise ValueError("Cannot save model checkpoint without a `tokenizer`.")
+
     save_path = Path(output_dir).resolve()
     save_path.mkdir(parents=True, exist_ok=True)
     timestamp = as_of or datetime.now().strftime("%Y%m%d_%H%M%S")
 
     is_peft = isinstance(model.backbone, PeftModel)
-    mode = "cls" if isinstance(model, SLMCls) else "json"
+    mode = model.mode
 
     # 1. Save backbone (LoRA adapters or full model)
     model.backbone.save_pretrained(save_path)
 
     # 2. Save tokenizer
-    tokenizer.save_pretrained(save_path)
+    active_tokenizer.save_pretrained(save_path)
 
     # 3. For SLMCls, save classification head
     if isinstance(model, SLMCls):
         torch.save(model.classifier.state_dict(), save_path / "classifier.pt")
 
     # 4. Save easySLM metadata
-    easyslm_config = {
+    max_length = model.max_length or (training_params or {}).get("max_length")
+    easyslm_config: dict[str, Any] = {
         "mode": mode,
         "model_type": type(model).__name__,
         "base_model_name": base_model_name,
@@ -72,6 +77,8 @@ def save_finetuned_model(
     }
     if isinstance(model, SLMCls):
         easyslm_config["pooling_strategy"] = model.pooling_strategy
+    if max_length is not None:
+        easyslm_config["max_length"] = max_length
 
     config_file = save_path / "easyslm_config.json"
     with open(config_file, "w", encoding="utf-8") as f:
@@ -104,17 +111,20 @@ def save_finetuned_model(
 
 def load_finetuned_model(
     checkpoint_dir: str | Path,
+    prompts_config_path: str | Path = "configs/prompts.yml",
     factory: ModelFactory | None = None,
-) -> tuple[SLMBase, PreTrainedTokenizerBase, dict[str, Any]]:
+) -> SLMBase:
     """
-    Loads a saved fine-tuned `SLMCls` or `SLMJson` model along with its tokenizer.
+    Loads a saved fine-tuned `SLMCls` or `SLMJson` model with its `tokenizer` and `metadata`
+    attached directly to the returned `SLMBase` instance.
 
     Args:
         checkpoint_dir: Directory containing the saved model checkpoint.
+        prompts_config_path: Path to prompts configuration YAML file.
         factory: Optional ModelFactory instance for caching and device management.
 
     Returns:
-        `(model, tokenizer, metadata)`
+        Loaded `SLMBase` instance (`SLMCls` or `SLMJson`).
     """
     path = Path(checkpoint_dir).resolve()
     if not path.exists():
@@ -125,13 +135,15 @@ def load_finetuned_model(
         raise FileNotFoundError(f"Missing 'easyslm_config.json' inside checkpoint: '{path}'")
 
     with open(config_file, encoding="utf-8") as f:
-        cfg = json.load(f)
+        cfg: dict[str, Any] = json.load(f)
 
+    cfg["checkpoint_dir"] = str(path)
     mode = cfg.get("mode", "cls").lower()
     base_model = cfg.get("base_model_name", "Qwen/Qwen2.5-0.5B")
     classes = cfg.get("classes", [])
     multi_label = cfg.get("multi_label", True)
     is_peft = cfg.get("is_peft", True)
+    max_length = cfg.get("max_length", None)
 
     factory = factory or ModelFactory()
 
@@ -165,6 +177,10 @@ def load_finetuned_model(
             classes=classes,
             multi_label=multi_label,
             pooling_strategy=pooling_strategy,
+            tokenizer=tokenizer,
+            prompts_config_path=prompts_config_path,
+            max_length=max_length,
+            metadata=cfg,
         )
 
         classifier_file = path / "classifier.pt"
@@ -177,7 +193,7 @@ def load_finetuned_model(
 
         cls_model.to(factory.device)
         cls_model.eval()
-        return cls_model, tokenizer, cfg
+        return cls_model
 
     elif mode == "json":
         # Load backbone: LoRA adapters on top of base model, or full fine-tuned model from checkpoint dir
@@ -199,10 +215,14 @@ def load_finetuned_model(
             backbone=backbone,
             classes=classes,
             multi_label=multi_label,
+            tokenizer=tokenizer,
+            prompts_config_path=prompts_config_path,
+            max_length=max_length,
+            metadata=cfg,
         )
         json_model.to(factory.device)
         json_model.eval()
-        return json_model, tokenizer, cfg
+        return json_model
 
     else:
         raise ValueError(f"Unknown model mode in easyslm_config.json: '{mode}'")

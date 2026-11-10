@@ -12,12 +12,13 @@ class SLMClsDataset(SLMDatasetBase):
     Dataset for Direct Classification (`SLMCls`).
 
     For each datapoint `(text, labels)`:
-    - Builds `[system, user]` chat messages (`assistant=None`).
-    - Applies the tokenizer's chat template and appends the `eos_token_id` at the end.
+    - Builds the plain-text prompt from `configs/prompts.yml`.
+    - Tokenizes the prompt and appends the tokenizer's native `eos_token_id` at the end.
     - Encodes the target `labels` as a binary 0/1 vector of shape `(num_classes,)` (`torch.float32`).
     """
 
     TASK_MODE = "cls"
+    DEFAULT_PROMPT_TEMPLATE = "{system_prompt}\n\nText: {user_prompt}"
 
     def _build_default_system_prompt(self) -> str:
         classes_str = ", ".join(f"'{c}'" for c in self.classes)
@@ -49,8 +50,8 @@ class SLMClsDataset(SLMDatasetBase):
         text: str,
         labels: list[str],
     ) -> dict[str, torch.Tensor]:
-        messages = self.build_chat_messages(user_text=text, assistant_text=None)
-        token_ids = self.render_chat_ids(messages, add_generation_prompt=False)
+        prompt_str = self.build_prompt(text)
+        token_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)
 
         eos_token_id = self.tokenizer.eos_token_id
         if self.max_length is not None:
@@ -59,7 +60,7 @@ class SLMClsDataset(SLMDatasetBase):
             else:
                 token_ids = token_ids[: self.max_length]
 
-        # Append EOS token at the end so its hidden state summarizes the full [system + user] sequence
+        # Append native EOS token at the end so its hidden state summarizes the full sequence
         if eos_token_id is not None and (len(token_ids) == 0 or token_ids[-1] != eos_token_id):
             token_ids = token_ids + [eos_token_id]
 

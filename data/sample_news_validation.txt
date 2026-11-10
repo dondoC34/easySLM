@@ -13,11 +13,11 @@ Major airline alliance reports record quarterly profits driven by international 
 Telecommunications regulator initiates investigation into cross-border mobile data roaming fees|||politics, technology
 Pediatric hospital unveils pediatric robotic surgery suite for complex spinal procedures|||health, technology
 National marathon champion announces retirement after twenty-year international running career|||sports
-Tech startup develops biodegradable packaging material synthesized from agricultural seaweed waste
-Global semiconductor consortium announces thirty billion dollar investment in next-generation chip foundry
-Municipal public health department issues emergency advisory regarding regional dengue fever outbreak
-European parliament votes in favor of sweeping new AI governance framework
-National football federation opens independent inquiry into financial fair play violations
+Tech startup develops biodegradable packaging material synthesized from agricultural seaweed waste ||| environment, technology
+Global semiconductor consortium announces thirty billion dollar investment in next-generation chip foundry ||| economy, technology
+Municipal public health department issues emergency advisory regarding regional dengue fever outbreak ||| health
+European parliament votes in favor of sweeping new AI governance framework ||| politics, technology
+National football federation opens independent inquiry into financial fair play violations ||| sports, economy
 Bankitalia stima una crescita dell'occupazione giovanile nei settori tecnologici e dei servizi digitali ||| economy, technology
 Il ministero dell'ambiente finanzia il rifacimento della rete idrica per contrastare le dispersioni nelle città ||| environment, politics
 Ricercatori italiani testano un vaccino a mRNA contro le recidive dei melanomi cutanei avanzati ||| health, technology
@@ -26,11 +26,11 @@ El regulador bursátil español autoriza la salida a bolsa de una filial de ener
 Ensayo clínico multicéntrico demuestra la eficacia de un nuevo fármaco contra el alzheimer precoz ||| health
 Les constructeurs aéronautiques européens testent un avion expérimental propulsé à l'hydrogène vert ||| technology, environment
 Die Bundesregierung verabschiedet eine nationale Strategie zur Förderung der Quantencomputing-Forschung ||| politics, technology
-L'Istat registra una flessione dell'inflazione sui beni energetici e sul carrello della spesa
-Emergenza smog nei centri urbani della pianura padana con blocco del traffico per i veicoli inquinanti
-Il commissario tecnico azzurro convoca tre giovani promesse del campionato in vista delle qualificazioni
-La agencia espacial europea confirma el aterrizaje exitoso de una sonda robótica en un asteroide
-El gobierno español aumenta las partidas presupuestarias destinadas a la atención primaria sanitaria
-Les agriculteurs manifestent contre les accords de libre-échange et les taxes sur le carburant agricole
-Die Europäische Zentralbank belässt die Leitzinsen auf dem aktuellen Niveau bei stabiler Konjunktur
-Charité Berlin startet eine klinische Pilotstudie zur telemedizinischen Nachsorge von Herzinfarkt-Patienten
+L'Istat registra una flessione dell'inflazione sui beni energetici e sul carrello della spesa ||| economy
+Emergenza smog nei centri urbani della pianura padana con blocco del traffico per i veicoli inquinanti ||| environment
+Il commissario tecnico azzurro convoca tre giovani promesse del campionato in vista delle qualificazioni ||| sports
+La agencia espacial europea confirma el aterrizaje exitoso de una sonda robótica en un asteroide ||| technology
+El gobierno español aumenta las partidas presupuestarias destinadas a la atención primaria sanitaria ||| politics, health
+Les agriculteurs manifestent contre les accords de libre-échange et les taxes sur le carburant agricole ||| politics, economy
+Die Europäische Zentralbank belässt die Leitzinsen auf dem aktuellen Niveau bei stabiler Konjunktur ||| economy
+Charité Berlin startet eine klinische Pilotstudie zur telemedizinischen Nachsorge von Herzinfarkt-Patienten ||| health, technology
