@@ -10,7 +10,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 from transformers import (
     PreTrainedTokenizerBase,
     Trainer,
@@ -386,7 +386,7 @@ class SLMFineTuner:
         )
 
         if val_data_path is not None:
-            val_ds = dataset_cls(
+            val_ds: SLMDatasetBase = dataset_cls(
                 data_path=val_data_path,
                 tokenizer=self.tokenizer,
                 classes=self.classes,
@@ -600,16 +600,20 @@ class SLMFineTuner:
                 )
 
             # Extract raw input texts
-            input_texts: list[str] = []
-            for i in range(len(dataset)):
-                if hasattr(dataset, "indices"):
-                    # Subset from random_split
-                    sub_idx = dataset.indices[i]
-                    input_texts.append(dataset.dataset.raw_samples[sub_idx][0])
-                elif hasattr(dataset, "raw_samples"):
-                    input_texts.append(dataset.raw_samples[i][0])
-                else:
-                    input_texts.append(f"Sample_{i}")
+            input_texts: list[str]
+            if isinstance(dataset, Subset):
+                inner_ds = dataset.dataset
+                input_texts = [
+                    inner_ds.raw_samples[sub_idx][0]  # type: ignore[attr-defined]
+                    for sub_idx in dataset.indices
+                ]
+            elif isinstance(dataset, SLMDatasetBase):
+                input_texts = [sample[0] for sample in dataset.raw_samples]
+            else:
+                input_texts = [
+                    f"Sample_{i}"
+                    for i in range(len(dataset))  # type: ignore[arg-type]
+                ]
 
             from src.tracking.tables import create_validation_errors_table
 
