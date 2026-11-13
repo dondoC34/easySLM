@@ -7,9 +7,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset, Subset
 from transformers import (
     PreTrainedTokenizerBase,
     Trainer,
@@ -42,7 +43,6 @@ class FineTuningConfig:
 
     output_dir: str = "./checkpoints"
     mode: Literal["json", "cls"] = "cls"
-    multi_label: bool = True
     pooling_strategy: PoolingStrategy = "eos"
 
     # Batching & VRAM optimization (tuned for 8 GB VRAM)
@@ -77,6 +77,8 @@ class FineTuningConfig:
     save_total_limit: int = 2
     logging_steps: int = 1
     val_split_ratio: float = 0.2
+    oversample_strategy: str | None = None
+    oversample_max_factor: float | None = None
     seed: int = 42
 
     # MLflow Integration
@@ -85,6 +87,7 @@ class FineTuningConfig:
     mlflow_experiment_name: str | None = None
     mlflow_config_path: str | None = None
     run_name: str | None = None
+    max_errors_per_class: int = 5
 
     @classmethod
     def from_yaml(
@@ -281,6 +284,7 @@ class SLMFineTuner:
         self.tokenizer: PreTrainedTokenizerBase | None = None
         self.trainer: Trainer | None = None
         self.classes: list[str] = []
+        self.multi_label: bool = False
         self.run_output_dir: Path | None = None
 
         if self.config.use_mlflow:
@@ -344,7 +348,7 @@ class SLMFineTuner:
         train_data_path: str | Path,
         val_data_path: str | Path | None = None,
         classes: Sequence[str] | None = None,
-    ) -> tuple[Dataset, Dataset | None, SLMDatasetBase]:
+    ) -> tuple[SLMDatasetBase, SLMDatasetBase | None, SLMDatasetBase]:
         """
         Loads the dataset(s) using `SLMJsonDataset` or `SLMClsDataset`.
         If `val_data_path` is None and `val_split_ratio > 0`, splits `train_data_path` into train/val.
@@ -362,12 +366,16 @@ class SLMFineTuner:
             data_path=train_data_path,
             tokenizer=self.tokenizer,
             classes=classes,
-            multi_label=self.config.multi_label,
             max_length=self.config.max_length,
             include_targets=True,
             prompts_config_path=self.config.prompts_config_path,
         )
         self.classes = full_dataset.classes
+        self.multi_label = full_dataset.multi_label
+        logger.info(
+            "Inferred task type from dataset: %s",
+            "MULTI-LABEL" if self.multi_label else "SINGLE-LABEL",
+        )
         logger.info(
             "Loaded dataset from '%s' | Mode: %s | Samples: %d | Classes (%d): %s",
             train_data_path,
@@ -378,38 +386,52 @@ class SLMFineTuner:
         )
 
         if val_data_path is not None:
-            val_dataset: Dataset | None = dataset_cls(
+            val_ds: SLMDatasetBase = dataset_cls(
                 data_path=val_data_path,
                 tokenizer=self.tokenizer,
                 classes=self.classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 max_length=self.config.max_length,
                 include_targets=True,
+                prompts_config_path=self.config.prompts_config_path,
             )
-            train_dataset: Dataset = full_dataset
+            train_dataset: SLMDatasetBase = full_dataset
             logger.info(
                 "Loaded separate validation dataset from '%s' (%d samples).",
                 val_data_path,
-                len(val_dataset),  # type: ignore[arg-type]
+                len(val_ds),
             )
+            val_dataset: SLMDatasetBase | None = val_ds
         elif self.config.val_split_ratio > 0.0 and len(full_dataset) >= 4:
-            val_size = max(1, int(round(len(full_dataset) * self.config.val_split_ratio)))
-            train_size = len(full_dataset) - val_size
-            generator = torch.Generator().manual_seed(self.config.seed)
-            train_dataset, val_dataset = random_split(
-                full_dataset,
-                [train_size, val_size],
-                generator=generator,
+            train_dataset, val_ds = full_dataset.split(
+                val_ratio=self.config.val_split_ratio,
+                seed=self.config.seed,
             )
             logger.info(
                 "Split dataset into %d training samples and %d validation samples (ratio=%.2f).",
-                train_size,
-                val_size,
+                len(train_dataset),
+                len(val_ds),
                 self.config.val_split_ratio,
             )
+            val_dataset = val_ds
         else:
             train_dataset = full_dataset
             val_dataset = None
+
+        if self.config.oversample_strategy and self.config.oversample_strategy != "none":
+            before_len = len(train_dataset)
+            train_dataset.oversample(
+                strategy=self.config.oversample_strategy,  # type: ignore[arg-type]
+                max_factor=self.config.oversample_max_factor,
+                seed=self.config.seed,
+            )
+            logger.info(
+                "Oversampled training dataset (%s, max_factor=%s): %d -> %d samples.",
+                self.config.oversample_strategy,
+                self.config.oversample_max_factor,
+                before_len,
+                len(train_dataset),
+            )
 
         return train_dataset, val_dataset, full_dataset
 
@@ -422,7 +444,7 @@ class SLMFineTuner:
             model = SLMJson.from_pretrained(
                 model_name=self.model_name,
                 classes=classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 prompts_config_path=self.config.prompts_config_path,
                 max_length=self.config.max_length,
                 factory=self.factory,
@@ -431,7 +453,7 @@ class SLMFineTuner:
             model = SLMCls.from_pretrained(
                 model_name=self.model_name,
                 classes=classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 pooling_strategy=self.config.pooling_strategy,
                 prompts_config_path=self.config.prompts_config_path,
                 max_length=self.config.max_length,
@@ -497,17 +519,78 @@ class SLMFineTuner:
 
         try:
             pred_output = self.trainer.predict(dataset)
+            raw_outputs: list[str] = []
+            parsed_outputs: list[Any] = []
+            error_scores: list[float] | None = None
+
             if self.config.mode == "cls":
                 from src.evaluation import extract_cls_binary_arrays
 
+                logits = pred_output.predictions
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                logits_arr = np.asarray(logits, dtype=np.float32)
+
                 y_true, y_pred = extract_cls_binary_arrays(
-                    logits=pred_output.predictions,
+                    logits=logits_arr,
                     labels=pred_output.label_ids,
-                    multi_label=self.config.multi_label,
+                    multi_label=self.multi_label,
                 )
+
+                if self.multi_label:
+                    probs = 1.0 / (1.0 + np.exp(-np.clip(logits_arr, -50.0, 50.0)))
+                else:
+                    exp_l = np.exp(logits_arr - np.max(logits_arr, axis=-1, keepdims=True))
+                    probs = exp_l / np.sum(exp_l, axis=-1, keepdims=True)
+
+                raw_outputs = [
+                    ", ".join(f"{c}: {p:.2f}" for c, p in zip(self.classes, row_p, strict=False))
+                    for row_p in probs
+                ]
+                parsed_outputs = [
+                    [self.classes[i] for i in np.where(row_pred == 1)[0]]
+                    if self.multi_label
+                    else (self.classes[int(np.argmax(row_pred))] if np.any(row_pred == 1) else "")
+                    for row_pred in y_pred
+                ]
+
+                # Severity score: highest probability assigned to an incorrect class
+                error_scores = []
+                for i in range(len(y_true)):
+                    wrong_mask = y_true[i] == 0
+                    error_scores.append(
+                        float(np.max(probs[i][wrong_mask])) if np.any(wrong_mask) else 0.0
+                    )
+
             else:
                 assert self.tokenizer is not None
-                from src.evaluation import extract_json_binary_arrays
+                from src.evaluation import _parse_class_list_string, extract_json_binary_arrays
+
+                p_ids = pred_output.predictions
+                if isinstance(p_ids, tuple):
+                    p_ids = p_ids[0]
+                p_ids_arr = np.asarray(p_ids)
+                if p_ids_arr.ndim == 3:
+                    p_ids_arr = np.argmax(p_ids_arr, axis=-1)
+
+                lbl_ids = np.asarray(pred_output.label_ids)
+                shift_preds = p_ids_arr[:, :-1]
+                shift_labels = lbl_ids[:, 1:]
+
+                class_to_idx = {c: i for i, c in enumerate(self.classes)}
+                for i in range(len(shift_labels)):
+                    mask = shift_labels[i] != -100
+                    sample_pred_ids = shift_preds[i][mask]
+                    pred_str = str(
+                        self.tokenizer.decode(sample_pred_ids.tolist(), skip_special_tokens=True)
+                    )
+                    raw_outputs.append(pred_str)
+                    parsed_classes, _ = _parse_class_list_string(pred_str, class_to_idx)
+                    parsed_outputs.append(
+                        parsed_classes
+                        if self.multi_label
+                        else (parsed_classes[0] if parsed_classes else "")
+                    )
 
                 y_true, y_pred, _, _, _ = extract_json_binary_arrays(
                     pred_ids=pred_output.predictions,
@@ -516,14 +599,44 @@ class SLMFineTuner:
                     classes=self.classes,
                 )
 
+            # Extract raw input texts
+            input_texts: list[str]
+            if isinstance(dataset, Subset):
+                inner_ds = dataset.dataset
+                input_texts = [
+                    inner_ds.raw_samples[sub_idx][0]  # type: ignore[attr-defined]
+                    for sub_idx in dataset.indices
+                ]
+            elif isinstance(dataset, SLMDatasetBase):
+                input_texts = [sample[0] for sample in dataset.raw_samples]
+            else:
+                input_texts = [
+                    f"Sample_{i}"
+                    for i in range(len(dataset))  # type: ignore[arg-type]
+                ]
+
+            from src.tracking.tables import create_validation_errors_table
+
+            validation_errors_tbl = create_validation_errors_table(
+                input_texts=input_texts,
+                y_true=y_true,
+                y_pred=y_pred,
+                classes=self.classes,
+                raw_outputs=raw_outputs,
+                parsed_outputs=parsed_outputs,
+                error_scores=error_scores,
+                max_errors_per_class=self.config.max_errors_per_class,
+            )
+
             from src.tracking.artifacts import log_evaluation_artifacts
 
             log_evaluation_artifacts(
                 y_true=y_true,
                 y_pred=y_pred,
                 classes=self.classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 local_output_dir=self.run_output_dir,
+                validation_errors_table=validation_errors_tbl,
             )
         except Exception as e:
             logger.warning("Failed generating visual/tabular evaluation artifacts: %s", e)
@@ -564,13 +677,13 @@ class SLMFineTuner:
 
         assert self.tokenizer is not None
         if self.config.mode == "cls":
-            compute_metrics_fn = build_cls_compute_metrics(multi_label=self.config.multi_label)
+            compute_metrics_fn = build_cls_compute_metrics(multi_label=self.multi_label)
             preprocess_logits_fn = None
         else:
             compute_metrics_fn = build_json_compute_metrics(
                 tokenizer=self.tokenizer,
                 classes=self.classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
             )
             preprocess_logits_fn = preprocess_logits_for_json_metrics
 

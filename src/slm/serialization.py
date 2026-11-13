@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import torch
+import yaml
 from peft import PeftModel
 from transformers import AutoModel, AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
@@ -12,6 +13,7 @@ from src.slm.base_slm import SLMBase
 from src.slm.cls_slm import SLMCls
 from src.slm.json_slm import SLMJson
 from src.slm.slm_factory import ModelFactory
+from src.utils.config import load_prompts_config
 from src.utils.model_card import clean_slug, generate_model_card_markdown
 
 logger = logging.getLogger(__name__)
@@ -90,7 +92,13 @@ def save_finetuned_model(
     with open(config_file, "w", encoding="utf-8") as f:
         json.dump(easyslm_config, f, indent=2)
 
-    # 5. Generate and save Model Card
+    # 5. Save snapshot of prompt configuration used during training
+    prompt_cfg = load_prompts_config(model.prompts_config_path)
+    prompt_config_file = save_path / "prompt_config.yml"
+    with open(prompt_config_file, "w", encoding="utf-8") as f:
+        yaml.safe_dump(prompt_cfg, f, sort_keys=False, allow_unicode=True)
+
+    # 6. Generate and save Model Card
     card_name = f"model_card_{clean_slug(base_model_name)}_{mode}_{timestamp}.md"
     card_content = generate_model_card_markdown(
         model_name=base_model_name,
@@ -117,7 +125,7 @@ def save_finetuned_model(
 
 def load_finetuned_model(
     checkpoint_dir: str | Path,
-    prompts_config_path: str | Path = "configs/prompts.yml",
+    prompts_config_path: str | Path | None = None,
     factory: ModelFactory | None = None,
 ) -> SLMBase:
     """
@@ -150,6 +158,20 @@ def load_finetuned_model(
     multi_label = cfg.get("multi_label", True)
     is_peft = cfg.get("is_peft", True)
     max_length = cfg.get("max_length", None)
+
+    resolved_prompts_config: str | Path
+    if prompts_config_path is not None:
+        resolved_prompts_config = prompts_config_path
+        logger.info("Using explicit prompts config: '%s'", resolved_prompts_config)
+    elif (path / "prompt_config.yml").exists():
+        resolved_prompts_config = path / "prompt_config.yml"
+        logger.info("Loaded prompts config from checkpoint: '%s'", resolved_prompts_config)
+    else:
+        resolved_prompts_config = "configs/prompts.yml"
+        logger.info(
+            "No 'prompt_config.yml' found in checkpoint; falling back to '%s'",
+            resolved_prompts_config,
+        )
 
     factory = factory or ModelFactory()
 
@@ -184,7 +206,7 @@ def load_finetuned_model(
             multi_label=multi_label,
             pooling_strategy=pooling_strategy,
             tokenizer=tokenizer,
-            prompts_config_path=prompts_config_path,
+            prompts_config_path=resolved_prompts_config,
             max_length=max_length,
             metadata=cfg,
         )
@@ -227,7 +249,7 @@ def load_finetuned_model(
             classes=classes,
             multi_label=multi_label,
             tokenizer=tokenizer,
-            prompts_config_path=prompts_config_path,
+            prompts_config_path=resolved_prompts_config,
             max_length=max_length,
             metadata=cfg,
         )

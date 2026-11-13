@@ -30,7 +30,7 @@ class SLMJsonDataset(SLMDatasetBase):
         data_path: str | Path | None = None,
         tokenizer: PreTrainedTokenizerBase | None = None,
         classes: Sequence[str] | None = None,
-        multi_label: bool = True,
+        multi_label: bool | None = None,
         system_prompt: str | None = None,
         max_length: int | None = None,
         include_targets: bool = True,

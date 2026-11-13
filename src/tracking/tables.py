@@ -190,3 +190,85 @@ def create_label_cardinality_table(
         table["predicted_pct"].append(round((p_freq / total_samples) * 100.0, 2))
 
     return table
+
+
+def create_validation_errors_table(
+    input_texts: Sequence[str],
+    y_true: np.ndarray,
+    y_pred: np.ndarray,
+    classes: Sequence[str],
+    raw_outputs: Sequence[str],
+    parsed_outputs: Sequence[Any],
+    error_scores: Sequence[float] | None = None,
+    max_errors_per_class: int = 5,
+) -> dict[str, list[Any]]:
+    """Creates a structured table of model prediction errors on the validation set.
+
+    For each class, prioritizes the most egregious mistakes (highest error_scores).
+
+    Args:
+        input_texts: Raw user input text for each validation sample.
+        y_true: Binary indicator array of shape `(num_samples, num_classes)`.
+        y_pred: Binary indicator array of shape `(num_samples, num_classes)`.
+        classes: Ordered list of class label names.
+        raw_outputs: Formatted raw outputs (probability strings for CLS, decoded strings for JSON).
+        parsed_outputs: Parsed prediction label(s).
+        error_scores: Optional severity ranking score per sample (e.g. max probability on wrong class).
+        max_errors_per_class: Max number of error rows to retain per true class.
+
+    Returns:
+        dict[str, list[Any]]: Table dictionary suitable for `mlflow.log_table`.
+    """
+    table: dict[str, list[Any]] = {
+        "input_text": [],
+        "ground_truth": [],
+        "raw_output": [],
+        "parsed_output": [],
+    }
+
+    # Find mismatch indices: samples where binary indicator differs
+    mismatch_mask = np.any(y_true != y_pred, axis=1)
+    error_indices = np.where(mismatch_mask)[0].tolist()
+    if not error_indices:
+        return table
+
+    # Group error indices by true class
+    class_to_errors: dict[str, list[int]] = {c: [] for c in classes}
+    unmatched_errors: list[int] = []
+
+    for idx in error_indices:
+        true_class_indices = np.where(y_true[idx] == 1)[0]
+        if len(true_class_indices) > 0:
+            for c_idx in true_class_indices:
+                class_to_errors[classes[c_idx]].append(idx)
+        else:
+            unmatched_errors.append(idx)
+
+    selected_indices: set[int] = set()
+
+    for c in classes:
+        c_errs = list(dict.fromkeys(class_to_errors[c]))
+        if error_scores is not None and len(c_errs) > 0:
+            c_errs.sort(key=lambda i: error_scores[i], reverse=True)
+        selected_for_c = c_errs[:max_errors_per_class]
+        selected_indices.update(selected_for_c)
+
+    if unmatched_errors:
+        if error_scores is not None:
+            unmatched_errors.sort(key=lambda i: error_scores[i], reverse=True)
+        selected_indices.update(unmatched_errors[:max_errors_per_class])
+
+    # Sort final selected indices for deterministic ordering
+    sorted_selected = sorted(selected_indices)
+    if error_scores is not None:
+        sorted_selected.sort(key=lambda i: error_scores[i], reverse=True)
+
+    for idx in sorted_selected:
+        true_names = [classes[ci] for ci in np.where(y_true[idx] == 1)[0]]
+        table["input_text"].append(str(input_texts[idx]))
+        table["ground_truth"].append(true_names if len(true_names) != 1 else true_names[0])
+        table["raw_output"].append(str(raw_outputs[idx]))
+        parsed = parsed_outputs[idx]
+        table["parsed_output"].append(parsed if isinstance(parsed, str | list) else str(parsed))
+
+    return table

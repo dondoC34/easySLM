@@ -13,6 +13,7 @@ import json
 import logging
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -39,6 +40,7 @@ def log_evaluation_artifacts(
     classes: Sequence[str],
     multi_label: bool = True,
     local_output_dir: str | Path | None = None,
+    validation_errors_table: dict[str, list[Any]] | None = None,
 ) -> dict[str, str]:
     """Generates and logs confusion matrices, metrics heatmaps, and cardinality plots/tables to MLflow.
 
@@ -147,6 +149,16 @@ def log_evaluation_artifacts(
         with open(p, "w", encoding="utf-8") as f:
             json.dump(tbl_card, f, indent=2)
         generated["table_cardinality"] = str(p)
+
+    # 7. Validation Errors Table (if provided)
+    if validation_errors_table is not None:
+        if has_active_run:
+            mlflow.log_table(validation_errors_table, "tables/validation_errors.json")
+        if local_tables_dir:
+            p = local_tables_dir / "validation_errors.json"
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(validation_errors_table, f, indent=2)
+            generated["table_errors"] = str(p)
 
     logger.info("Evaluation artifacts successfully logged (items: %d).", len(generated))
     return generated

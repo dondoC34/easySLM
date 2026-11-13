@@ -13,13 +13,6 @@
 # - 'json': Generative classification where the model outputs an alphabetically sorted JSON list, e.g. "['classA', 'classB']".
 mode: "cls"
 
-# Multi-label classification flag:
-# - true: Multi-label classification (multiple classes can be true simultaneously).
-#         In 'cls' mode: uses BCEWithLogitsLoss during training and Sigmoid activation during inference.
-# - false: Single-label classification (classes are mutually exclusive).
-#          In 'cls' mode: uses CrossEntropyLoss during training and Softmax activation during inference.
-multi_label: false
-
 # Sequence pooling strategy for 'cls' mode:
 # - 'eos': Uses the hidden state of the final non-padding prompt token (Recommended).
 # - 'mean': Attention-mask-weighted average across all valid token representations.
@@ -115,7 +108,7 @@ num_train_epochs: 3.0
 eval_strategy: "steps"
 
 # Number of update steps between evaluations (only used if eval_strategy is 'steps').
-eval_steps: 5
+eval_steps: 10
 
 # Checkpoint saving frequency: 'epoch', 'steps', or 'no'.
 save_strategy: "no"
@@ -129,6 +122,10 @@ logging_steps: 5
 # Fraction of the dataset reserved for validation (e.g., 0.15 = 15% validation, 85% training).
 val_split_ratio: 0.15
 
+# Class imbalance oversampling on training split ('max', 'sqrt', or null/'none' to disable).
+oversample_strategy: null
+oversample_max_factor: null
+
 # Random seed for dataset shuffling and reproducibility.
 seed: 42
 
@@ -139,3 +136,4 @@ use_mlflow: true
 mlflow_tracking_uri: "sqlite:///mlflow.db"
 mlflow_experiment_name: "easySLM_finetuning"
 run_name: null
+max_errors_per_class: 5
