@@ -10,7 +10,7 @@ from typing import Any, Literal
 import numpy as np
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
-from torch.utils.data import Dataset, random_split
+from torch.utils.data import Dataset
 from transformers import (
     PreTrainedTokenizerBase,
     Trainer,
@@ -78,6 +78,8 @@ class FineTuningConfig:
     save_total_limit: int = 2
     logging_steps: int = 1
     val_split_ratio: float = 0.2
+    oversample_strategy: str | None = None
+    oversample_max_factor: float | None = None
     max_errors_per_class: int = 5
     seed: int = 42
 
@@ -346,7 +348,7 @@ class SLMFineTuner:
         train_data_path: str | Path,
         val_data_path: str | Path | None = None,
         classes: Sequence[str] | None = None,
-    ) -> tuple[Dataset, Dataset | None, SLMDatasetBase]:
+    ) -> tuple[SLMDatasetBase, SLMDatasetBase | None, SLMDatasetBase]:
         """
         Loads the dataset(s) using `SLMJsonDataset` or `SLMClsDataset`.
         If `val_data_path` is None and `val_split_ratio > 0`, splits `train_data_path` into train/val.
@@ -364,9 +366,9 @@ class SLMFineTuner:
             data_path=train_data_path,
             tokenizer=self.tokenizer,
             classes=classes,
-            multi_label=self.config.multi_label,
             max_length=self.config.max_length,
             include_targets=True,
+            multi_label=self.config.multi_label,
             prompts_config_path=self.config.prompts_config_path,
         )
         self.classes = full_dataset.classes
@@ -380,38 +382,52 @@ class SLMFineTuner:
         )
 
         if val_data_path is not None:
-            val_dataset: Dataset | None = dataset_cls(
+            val_ds = dataset_cls(
                 data_path=val_data_path,
                 tokenizer=self.tokenizer,
                 classes=self.classes,
                 multi_label=self.config.multi_label,
                 max_length=self.config.max_length,
                 include_targets=True,
+                prompts_config_path=self.config.prompts_config_path,
             )
-            train_dataset: Dataset = full_dataset
+            train_dataset: SLMDatasetBase = full_dataset
             logger.info(
                 "Loaded separate validation dataset from '%s' (%d samples).",
                 val_data_path,
-                len(val_dataset),  # type: ignore[arg-type]
+                len(val_ds),
             )
+            val_dataset: SLMDatasetBase | None = val_ds
         elif self.config.val_split_ratio > 0.0 and len(full_dataset) >= 4:
-            val_size = max(1, int(round(len(full_dataset) * self.config.val_split_ratio)))
-            train_size = len(full_dataset) - val_size
-            generator = torch.Generator().manual_seed(self.config.seed)
-            train_dataset, val_dataset = random_split(
-                full_dataset,
-                [train_size, val_size],
-                generator=generator,
+            train_dataset, val_ds = full_dataset.split(
+                val_ratio=self.config.val_split_ratio,
+                seed=self.config.seed,
             )
             logger.info(
                 "Split dataset into %d training samples and %d validation samples (ratio=%.2f).",
-                train_size,
-                val_size,
+                len(train_dataset),
+                len(val_ds),
                 self.config.val_split_ratio,
             )
+            val_dataset = val_ds
         else:
             train_dataset = full_dataset
             val_dataset = None
+
+        if self.config.oversample_strategy and self.config.oversample_strategy != "none":
+            before_len = len(train_dataset)
+            train_dataset.oversample(
+                strategy=self.config.oversample_strategy,  # type: ignore[arg-type]
+                max_factor=self.config.oversample_max_factor,
+                seed=self.config.seed,
+            )
+            logger.info(
+                "Oversampled training dataset (%s, max_factor=%s): %d -> %d samples.",
+                self.config.oversample_strategy,
+                self.config.oversample_max_factor,
+                before_len,
+                len(train_dataset),
+            )
 
         return train_dataset, val_dataset, full_dataset
 

@@ -1,3 +1,6 @@
+import copy
+import math
+import random
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from pathlib import Path
@@ -254,6 +257,90 @@ class SLMDatasetBase(Dataset, ABC):
 
     def __len__(self) -> int:
         return len(self.encoded_samples)
+
+    def split(
+        self,
+        val_ratio: float = 0.15,
+        seed: int = 42,
+    ) -> tuple["SLMDatasetBase", "SLMDatasetBase"]:
+        """Splits the dataset into two independent instances `(train_ds, val_ds)` without re-tokenizing."""
+        if not 0.0 < val_ratio < 1.0:
+            raise ValueError(f"`val_ratio` must be in (0, 1), got {val_ratio}.")
+        indices = list(range(len(self.encoded_samples)))
+        random.Random(seed).shuffle(indices)
+
+        val_size = max(1, int(round(len(indices) * val_ratio)))
+        val_indices = indices[:val_size]
+        train_indices = indices[val_size:]
+
+        train_ds = copy.copy(self)
+        train_ds.raw_samples = [self.raw_samples[i] for i in train_indices]
+        train_ds.encoded_samples = [self.encoded_samples[i] for i in train_indices]
+
+        val_ds = copy.copy(self)
+        val_ds.raw_samples = [self.raw_samples[i] for i in val_indices]
+        val_ds.encoded_samples = [self.encoded_samples[i] for i in val_indices]
+        return train_ds, val_ds
+
+    def oversample(
+        self,
+        strategy: Literal["max", "sqrt"] = "max",
+        max_factor: float | None = None,
+        seed: int = 42,
+    ) -> "SLMDatasetBase":
+        """Oversamples minority classes in-place, keeping `raw_samples` and `encoded_samples` in sync."""
+        if strategy not in ("max", "sqrt"):
+            raise ValueError(
+                f"Unsupported oversample strategy '{strategy}'. Choose 'max' or 'sqrt'."
+            )
+        if not self.raw_samples:
+            return self
+
+        counts: dict[str, int] = {c: 0 for c in self.classes}
+        class_indices: dict[str, list[int]] = {c: [] for c in self.classes}
+        for idx, (_, lbls) in enumerate(self.raw_samples):
+            for lbl in lbls:
+                if lbl in counts:
+                    counts[lbl] += 1
+                    class_indices[lbl].append(idx)
+
+        max_count = max(counts.values(), default=0)
+        if max_count == 0:
+            return self
+
+        rng = random.Random(seed)
+        current_counts = counts.copy()
+        extra_indices: list[int] = []
+
+        for c in sorted(self.classes, key=lambda cls_name: counts[cls_name]):
+            pool = class_indices[c]
+            if not pool:
+                continue
+            target = (
+                max_count if strategy == "max" else int(round(math.sqrt(max_count * counts[c])))
+            )
+            if max_factor is not None:
+                target = min(target, int(round(counts[c] * max_factor)))
+
+            needed = target - current_counts[c]
+            if needed <= 0:
+                continue
+
+            full_repeats, remainder = divmod(needed, len(pool))
+            chosen = pool * full_repeats + rng.sample(pool, remainder)
+            extra_indices.extend(chosen)
+            for idx in chosen:
+                for lbl in self.raw_samples[idx][1]:
+                    if lbl in current_counts:
+                        current_counts[lbl] += 1
+
+        if extra_indices:
+            all_indices = list(range(len(self.raw_samples))) + extra_indices
+            rng.shuffle(all_indices)
+            self.raw_samples = [self.raw_samples[i] for i in all_indices]
+            self.encoded_samples = [self.encoded_samples[i] for i in all_indices]
+
+        return self
 
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         return self.encoded_samples[idx]
