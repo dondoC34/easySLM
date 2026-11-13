@@ -92,7 +92,7 @@ class SLMBase(nn.Module, ABC):
     def from_checkpoint(
         cls,
         checkpoint_dir: str | Path,
-        prompts_config_path: str | Path = "configs/prompts.yml",
+        prompts_config_path: str | Path | None = None,
         factory: ModelFactory | None = None,
     ) -> SLMBase:
         """
@@ -113,7 +113,7 @@ class SLMBase(nn.Module, ABC):
         models_dir: str | Path = "./models/finetuned",
         model_type: str = "cls",
         metric: str = "eval_f1_macro",
-        prompts_config_path: str | Path = "configs/prompts.yml",
+        prompts_config_path: str | Path | None = None,
         factory: ModelFactory | None = None,
     ) -> SLMBase:
         """
