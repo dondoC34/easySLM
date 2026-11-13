@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 import torch
 from peft import LoraConfig, TaskType, get_peft_model
 from torch.utils.data import Dataset, random_split
@@ -77,6 +78,7 @@ class FineTuningConfig:
     save_total_limit: int = 2
     logging_steps: int = 1
     val_split_ratio: float = 0.2
+    max_errors_per_class: int = 5
     seed: int = 42
 
     # MLflow Integration
@@ -497,17 +499,78 @@ class SLMFineTuner:
 
         try:
             pred_output = self.trainer.predict(dataset)
+            raw_outputs: list[str] = []
+            parsed_outputs: list[Any] = []
+            error_scores: list[float] | None = None
+
             if self.config.mode == "cls":
                 from src.evaluation import extract_cls_binary_arrays
 
+                logits = pred_output.predictions
+                if isinstance(logits, tuple):
+                    logits = logits[0]
+                logits_arr = np.asarray(logits, dtype=np.float32)
+
                 y_true, y_pred = extract_cls_binary_arrays(
-                    logits=pred_output.predictions,
+                    logits=logits_arr,
                     labels=pred_output.label_ids,
                     multi_label=self.config.multi_label,
                 )
+
+                if self.config.multi_label:
+                    probs = 1.0 / (1.0 + np.exp(-np.clip(logits_arr, -50.0, 50.0)))
+                else:
+                    exp_l = np.exp(logits_arr - np.max(logits_arr, axis=-1, keepdims=True))
+                    probs = exp_l / np.sum(exp_l, axis=-1, keepdims=True)
+
+                raw_outputs = [
+                    ", ".join(f"{c}: {p:.2f}" for c, p in zip(self.classes, row_p, strict=False))
+                    for row_p in probs
+                ]
+                parsed_outputs = [
+                    [self.classes[i] for i in np.where(row_pred == 1)[0]]
+                    if self.config.multi_label
+                    else (self.classes[int(np.argmax(row_pred))] if np.any(row_pred == 1) else "")
+                    for row_pred in y_pred
+                ]
+
+                # Severity score: highest probability assigned to an incorrect class
+                error_scores = []
+                for i in range(len(y_true)):
+                    wrong_mask = y_true[i] == 0
+                    error_scores.append(
+                        float(np.max(probs[i][wrong_mask])) if np.any(wrong_mask) else 0.0
+                    )
+
             else:
                 assert self.tokenizer is not None
-                from src.evaluation import extract_json_binary_arrays
+                from src.evaluation import _parse_class_list_string, extract_json_binary_arrays
+
+                p_ids = pred_output.predictions
+                if isinstance(p_ids, tuple):
+                    p_ids = p_ids[0]
+                p_ids_arr = np.asarray(p_ids)
+                if p_ids_arr.ndim == 3:
+                    p_ids_arr = np.argmax(p_ids_arr, axis=-1)
+
+                lbl_ids = np.asarray(pred_output.label_ids)
+                shift_preds = p_ids_arr[:, :-1]
+                shift_labels = lbl_ids[:, 1:]
+
+                class_to_idx = {c: i for i, c in enumerate(self.classes)}
+                for i in range(len(shift_labels)):
+                    mask = shift_labels[i] != -100
+                    sample_pred_ids = shift_preds[i][mask]
+                    pred_str = str(
+                        self.tokenizer.decode(sample_pred_ids.tolist(), skip_special_tokens=True)
+                    )
+                    raw_outputs.append(pred_str)
+                    parsed_classes, _ = _parse_class_list_string(pred_str, class_to_idx)
+                    parsed_outputs.append(
+                        parsed_classes
+                        if self.config.multi_label
+                        else (parsed_classes[0] if parsed_classes else "")
+                    )
 
                 y_true, y_pred, _, _, _ = extract_json_binary_arrays(
                     pred_ids=pred_output.predictions,
@@ -515,6 +578,31 @@ class SLMFineTuner:
                     tokenizer=self.tokenizer,
                     classes=self.classes,
                 )
+
+            # Extract raw input texts
+            input_texts: list[str] = []
+            for i in range(len(dataset)):
+                if hasattr(dataset, "indices"):
+                    # Subset from random_split
+                    sub_idx = dataset.indices[i]
+                    input_texts.append(dataset.dataset.raw_samples[sub_idx][0])
+                elif hasattr(dataset, "raw_samples"):
+                    input_texts.append(dataset.raw_samples[i][0])
+                else:
+                    input_texts.append(f"Sample_{i}")
+
+            from src.tracking.tables import create_validation_errors_table
+
+            validation_errors_tbl = create_validation_errors_table(
+                input_texts=input_texts,
+                y_true=y_true,
+                y_pred=y_pred,
+                classes=self.classes,
+                raw_outputs=raw_outputs,
+                parsed_outputs=parsed_outputs,
+                error_scores=error_scores,
+                max_errors_per_class=self.config.max_errors_per_class,
+            )
 
             from src.tracking.artifacts import log_evaluation_artifacts
 
@@ -524,6 +612,7 @@ class SLMFineTuner:
                 classes=self.classes,
                 multi_label=self.config.multi_label,
                 local_output_dir=self.run_output_dir,
+                validation_errors_table=validation_errors_tbl,
             )
         except Exception as e:
             logger.warning("Failed generating visual/tabular evaluation artifacts: %s", e)

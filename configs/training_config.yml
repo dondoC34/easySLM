@@ -115,7 +115,7 @@ num_train_epochs: 3.0
 eval_strategy: "steps"
 
 # Number of update steps between evaluations (only used if eval_strategy is 'steps').
-eval_steps: 5
+eval_steps: 10
 
 # Checkpoint saving frequency: 'epoch', 'steps', or 'no'.
 save_strategy: "no"
@@ -139,3 +139,4 @@ use_mlflow: true
 mlflow_tracking_uri: "sqlite:///mlflow.db"
 mlflow_experiment_name: "easySLM_finetuning"
 run_name: null
+max_errors_per_class: 5
