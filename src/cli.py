@@ -99,9 +99,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-length", type=int, default=None, help="Maximum sequence length in tokens"
     )
     ftune_parser.add_argument(
-        "--single-label", action="store_true", help="Force single-label classification"
-    )
-    ftune_parser.add_argument(
         "--pooling",
         type=str,
         choices=["eos", "mean", "max"],
@@ -176,8 +173,8 @@ def build_parser() -> argparse.ArgumentParser:
     pred_parser.add_argument(
         "--prompts-config",
         type=str,
-        default="configs/prompts.yml",
-        help="Path to prompts configuration YAML file",
+        default=None,
+        help="Path to prompts configuration YAML file (defaults to checkpoint prompt_config.yml if present, else configs/prompts.yml)",
     )
 
     # --------------------------------------------------------------------------
@@ -216,8 +213,6 @@ def run_ftune(args: argparse.Namespace) -> None:
         overrides["gradient_accumulation_steps"] = args.grad_accum
     if args.max_length is not None:
         overrides["max_length"] = args.max_length
-    if args.single_label:
-        overrides["multi_label"] = False
     if args.pooling is not None:
         overrides["pooling_strategy"] = args.pooling
     if args.no_lora:

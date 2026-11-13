@@ -37,7 +37,7 @@ class SLMDatasetBase(Dataset, ABC):
         data_path: str | Path | None = None,
         tokenizer: PreTrainedTokenizerBase | None = None,
         classes: Sequence[str] | None = None,
-        multi_label: bool = True,
+        multi_label: bool | None = None,
         system_prompt: str | None = None,
         max_length: int | None = None,
         include_targets: bool = True,
@@ -54,7 +54,6 @@ class SLMDatasetBase(Dataset, ABC):
 
         self.data_path = Path(data_path) if data_path is not None else None
         self.tokenizer = tokenizer
-        self.multi_label = multi_label
         self.max_length = max_length
         self.include_targets = include_targets
         self.prompts_config_path = prompts_config_path
@@ -84,6 +83,15 @@ class SLMDatasetBase(Dataset, ABC):
             self.raw_samples = self._load_and_parse_files(self.data_path)
             if not self.raw_samples:
                 raise ValueError(f"No valid datapoints found in '{self.data_path}'.")
+
+        if multi_label is None:
+            self.multi_label: bool = (
+                any(len(lbls) > 1 for _, lbls in self.raw_samples)
+                if self.include_targets
+                else False
+            )
+        else:
+            self.multi_label = multi_label
 
         # 2. Build sorted class vocabulary
         if classes is None:
@@ -201,14 +209,6 @@ class SLMDatasetBase(Dataset, ABC):
 
                     if self.include_targets and not labels:
                         raise ValueError(f"No labels found in '{file_path}' at line {line_num}.")
-
-                    if not self.multi_label and self.include_targets and len(labels) != 1:
-                        raise ValueError(
-                            f"Single-label classification error in '{file_path}' at line {line_num}: "
-                            f"Expected exactly 1 label per sample, but found {len(labels)}: {labels}. "
-                            f"Sample text: '{text}'. "
-                            f"To use multiple labels per sample, run in multi-label mode (multi_label=True)."
-                        )
 
                     parsed_rows.append((text, labels))
 

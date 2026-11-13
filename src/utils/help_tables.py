@@ -51,11 +51,6 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
         "Maximum sequence token length (truncates longer sequences).",
     ),
     (
-        "--single-label",
-        "flag (default: False)",
-        "Enforces single-label classification (CrossEntropy + Softmax / argmax).",
-    ),
-    (
         "--pooling",
         "'eos'|'mean'|'max' (default: 'eos')",
         "Sequence pooling strategy in 'cls' mode.",
@@ -105,7 +100,7 @@ PREDICT_OPTIONS: list[tuple[str, str, str]] = [
     ("--batch-size", "int (default: 8)", "Batch size during inference."),
     (
         "--prompts-config",
-        "path (default: 'configs/prompts.yml')",
+        "path (default: checkpoint prompt_config.yml)",
         "Path to YAML prompts configuration file.",
     ),
 ]

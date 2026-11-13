@@ -13,13 +13,6 @@
 # - 'json': Generative classification where the model outputs an alphabetically sorted JSON list, e.g. "['classA', 'classB']".
 mode: "cls"
 
-# Multi-label classification flag:
-# - true: Multi-label classification (multiple classes can be true simultaneously).
-#         In 'cls' mode: uses BCEWithLogitsLoss during training and Sigmoid activation during inference.
-# - false: Single-label classification (classes are mutually exclusive).
-#          In 'cls' mode: uses CrossEntropyLoss during training and Softmax activation during inference.
-multi_label: false
-
 # Sequence pooling strategy for 'cls' mode:
 # - 'eos': Uses the hidden state of the final non-padding prompt token (Recommended).
 # - 'mean': Attention-mask-weighted average across all valid token representations.

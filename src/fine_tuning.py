@@ -43,7 +43,6 @@ class FineTuningConfig:
 
     output_dir: str = "./checkpoints"
     mode: Literal["json", "cls"] = "cls"
-    multi_label: bool = True
     pooling_strategy: PoolingStrategy = "eos"
 
     # Batching & VRAM optimization (tuned for 8 GB VRAM)
@@ -80,7 +79,6 @@ class FineTuningConfig:
     val_split_ratio: float = 0.2
     oversample_strategy: str | None = None
     oversample_max_factor: float | None = None
-    max_errors_per_class: int = 5
     seed: int = 42
 
     # MLflow Integration
@@ -89,6 +87,7 @@ class FineTuningConfig:
     mlflow_experiment_name: str | None = None
     mlflow_config_path: str | None = None
     run_name: str | None = None
+    max_errors_per_class: int = 5
 
     @classmethod
     def from_yaml(
@@ -285,6 +284,7 @@ class SLMFineTuner:
         self.tokenizer: PreTrainedTokenizerBase | None = None
         self.trainer: Trainer | None = None
         self.classes: list[str] = []
+        self.multi_label: bool = False
         self.run_output_dir: Path | None = None
 
         if self.config.use_mlflow:
@@ -368,10 +368,14 @@ class SLMFineTuner:
             classes=classes,
             max_length=self.config.max_length,
             include_targets=True,
-            multi_label=self.config.multi_label,
             prompts_config_path=self.config.prompts_config_path,
         )
         self.classes = full_dataset.classes
+        self.multi_label = full_dataset.multi_label
+        logger.info(
+            "Inferred task type from dataset: %s",
+            "MULTI-LABEL" if self.multi_label else "SINGLE-LABEL",
+        )
         logger.info(
             "Loaded dataset from '%s' | Mode: %s | Samples: %d | Classes (%d): %s",
             train_data_path,
@@ -386,7 +390,7 @@ class SLMFineTuner:
                 data_path=val_data_path,
                 tokenizer=self.tokenizer,
                 classes=self.classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 max_length=self.config.max_length,
                 include_targets=True,
                 prompts_config_path=self.config.prompts_config_path,
@@ -440,7 +444,7 @@ class SLMFineTuner:
             model = SLMJson.from_pretrained(
                 model_name=self.model_name,
                 classes=classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 prompts_config_path=self.config.prompts_config_path,
                 max_length=self.config.max_length,
                 factory=self.factory,
@@ -449,7 +453,7 @@ class SLMFineTuner:
             model = SLMCls.from_pretrained(
                 model_name=self.model_name,
                 classes=classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 pooling_strategy=self.config.pooling_strategy,
                 prompts_config_path=self.config.prompts_config_path,
                 max_length=self.config.max_length,
@@ -530,10 +534,10 @@ class SLMFineTuner:
                 y_true, y_pred = extract_cls_binary_arrays(
                     logits=logits_arr,
                     labels=pred_output.label_ids,
-                    multi_label=self.config.multi_label,
+                    multi_label=self.multi_label,
                 )
 
-                if self.config.multi_label:
+                if self.multi_label:
                     probs = 1.0 / (1.0 + np.exp(-np.clip(logits_arr, -50.0, 50.0)))
                 else:
                     exp_l = np.exp(logits_arr - np.max(logits_arr, axis=-1, keepdims=True))
@@ -545,7 +549,7 @@ class SLMFineTuner:
                 ]
                 parsed_outputs = [
                     [self.classes[i] for i in np.where(row_pred == 1)[0]]
-                    if self.config.multi_label
+                    if self.multi_label
                     else (self.classes[int(np.argmax(row_pred))] if np.any(row_pred == 1) else "")
                     for row_pred in y_pred
                 ]
@@ -584,7 +588,7 @@ class SLMFineTuner:
                     parsed_classes, _ = _parse_class_list_string(pred_str, class_to_idx)
                     parsed_outputs.append(
                         parsed_classes
-                        if self.config.multi_label
+                        if self.multi_label
                         else (parsed_classes[0] if parsed_classes else "")
                     )
 
@@ -626,7 +630,7 @@ class SLMFineTuner:
                 y_true=y_true,
                 y_pred=y_pred,
                 classes=self.classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
                 local_output_dir=self.run_output_dir,
                 validation_errors_table=validation_errors_tbl,
             )
@@ -669,13 +673,13 @@ class SLMFineTuner:
 
         assert self.tokenizer is not None
         if self.config.mode == "cls":
-            compute_metrics_fn = build_cls_compute_metrics(multi_label=self.config.multi_label)
+            compute_metrics_fn = build_cls_compute_metrics(multi_label=self.multi_label)
             preprocess_logits_fn = None
         else:
             compute_metrics_fn = build_json_compute_metrics(
                 tokenizer=self.tokenizer,
                 classes=self.classes,
-                multi_label=self.config.multi_label,
+                multi_label=self.multi_label,
             )
             preprocess_logits_fn = preprocess_logits_for_json_metrics
 
