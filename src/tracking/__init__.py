@@ -13,7 +13,13 @@ This package provides a modular architecture for MLflow experiment tracking:
 from __future__ import annotations
 
 from src.tracking.artifacts import log_evaluation_artifacts
-from src.tracking.config import DEFAULT_CONFIG, get_mlflow_config, load_mlflow_config, mlflow_config
+from src.tracking.config import (
+    DEFAULT_CONFIG,
+    configure_mlflow_env,
+    get_mlflow_config,
+    load_mlflow_config,
+    mlflow_config,
+)
 from src.tracking.manager import (
     artifact_uri_to_path,
     clear_mlflow_data,
@@ -45,6 +51,7 @@ __all__ = [
     "artifact_uri_to_path",
     "check_mlflow_server_online",
     "clear_mlflow_data",
+    "configure_mlflow_env",
     "create_cross_label_confusion_matrix_figure",
     "create_cross_label_confusion_matrix_table",
     "create_label_cardinality_figure",
