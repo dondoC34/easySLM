@@ -235,7 +235,6 @@ class SLMBase(nn.Module, ABC):
             tokenizer=self.tokenizer,
             classes=self.classes,
             multi_label=self.multi_label,
-            max_length=self.max_length,
             include_targets=False,
             prompts_config_path=self.prompts_config_path,
         )
