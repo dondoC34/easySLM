@@ -7,63 +7,30 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
         "Hugging Face model ID. Examples: 'Qwen/Qwen2.5-0.5B', 'Qwen/Qwen2.5-1.5B', 'meta-llama/Llama-3.2-1B', 'google/gemma-2-2b'.",
     ),
     (
-        "--type",
-        "'cls' | 'json' (default: 'cls')",
-        "Classification mode: 'cls' (dense linear head) or 'json' (generative list).",
-    ),
-    (
         "--data",
         "path (default: 'data/sample_news.txt')",
-        "Path to dataset file (.txt) or directory containing .txt files.",
+        "Path to dataset .txt file or folder (auto-discovers train.txt and optional val.txt; splits if no val.txt).",
     ),
     (
-        "--val-data",
-        "path (default: None)",
-        "Optional path to separate validation dataset (.txt file or directory). If omitted, 15% is randomly split from training data.",
-    ),
-    (
-        "--output-dir",
-        "path (default: './models/finetuned')",
-        "Directory where model checkpoints and Markdown Model Cards are saved.",
+        "--type",
+        "'cls' | 'json' (default: from config)",
+        "Optional override for classification mode: 'cls' (dense linear head) or 'json' (generative list).",
     ),
     (
         "--config",
         "path (default: 'configs/training_config.yml')",
-        "Path to base YAML training configuration file.",
+        "Path to YAML training configuration file (controls batch sizes, LoRA, LR, early stopping, MLflow, etc.).",
     ),
     (
         "--prompts-config",
-        "path (default: 'configs/prompts.yml')",
-        "Path to YAML prompts configuration file.",
-    ),
-    ("--epochs", "float (default: 3.0)", "Total training epochs (overrides config value)."),
-    ("--batch-size", "int (default: 2)", "Per-device training batch size."),
-    ("--eval-batch-size", "int (default: 4)", "Per-device validation batch size."),
-    ("--lr", "float (default: 2e-4)", "Peak learning rate for AdamW optimizer."),
-    (
-        "--grad-accum",
-        "int (default: 4)",
-        "Gradient accumulation steps (effective batch = batch_size * grad_accum).",
+        "path (default: from config)",
+        "Optional override path to YAML prompts configuration file.",
     ),
     (
-        "--max-length",
-        "int (default: 512)",
-        "Maximum sequence token length (truncates longer sequences).",
+        "--epochs",
+        "float (default: from config)",
+        "Optional override for total training epochs.",
     ),
-    (
-        "--pooling",
-        "'eos'|'mean'|'max' (default: 'eos')",
-        "Sequence pooling strategy in 'cls' mode.",
-    ),
-    (
-        "--no-lora",
-        "flag (default: False)",
-        "Disables LoRA and performs full parameter fine-tuning.",
-    ),
-    ("--lora-r", "int (default: 8)", "Low-rank dimension (rank r) for LoRA adapters."),
-    ("--lora-alpha", "int (default: 16)", "Scaling factor alpha for LoRA adapters."),
-    ("--no-mlflow", "flag (default: False)", "Disables MLflow experiment tracking."),
-    ("--run-name", "str (default: auto)", "Custom run name for MLflow and checkpoint directory."),
 ]
 
 PREDICT_OPTIONS: list[tuple[str, str, str]] = [

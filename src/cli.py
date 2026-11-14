@@ -43,30 +43,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Base model ID (e.g. 'Qwen/Qwen2.5-0.5B', 'Qwen/Qwen2.5-1.5B', 'meta-llama/Llama-3.2-1B', 'google/gemma-2-2b')",
     )
     ftune_parser.add_argument(
+        "--data",
+        type=str,
+        default="data/sample_news.txt",
+        help="Path to training dataset (.txt file or folder containing train.txt and optional val.txt)",
+    )
+    ftune_parser.add_argument(
         "--type",
         dest="mode",
         type=str,
         choices=["cls", "json"],
-        default="cls",
-        help="Classification mode: 'cls' (linear classification head) or 'json' (generative list output)",
-    )
-    ftune_parser.add_argument(
-        "--data",
-        type=str,
-        default="data/sample_news.txt",
-        help="Path to training dataset (.txt file or folder)",
-    )
-    ftune_parser.add_argument(
-        "--val-data",
-        type=str,
         default=None,
-        help="Optional path to separate validation dataset (.txt file or folder)",
-    )
-    ftune_parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="./models/finetuned",
-        help="Directory where model checkpoints and model cards are saved",
+        help="Classification mode override: 'cls' (linear classification head) or 'json' (generative list output)",
     )
     ftune_parser.add_argument(
         "--config",
@@ -77,46 +65,14 @@ def build_parser() -> argparse.ArgumentParser:
     ftune_parser.add_argument(
         "--prompts-config",
         type=str,
-        default="configs/prompts.yml",
-        help="Path to prompts configuration YAML file",
-    )
-
-    # Optional individual parameter overrides for training_config.yml
-    ftune_parser.add_argument(
-        "--epochs", type=float, default=None, help="Number of training epochs"
-    )
-    ftune_parser.add_argument(
-        "--batch-size", type=int, default=None, help="Per-device train batch size"
-    )
-    ftune_parser.add_argument(
-        "--eval-batch-size", type=int, default=None, help="Per-device eval batch size"
-    )
-    ftune_parser.add_argument("--lr", type=float, default=None, help="Learning rate")
-    ftune_parser.add_argument(
-        "--grad-accum", type=int, default=None, help="Gradient accumulation steps"
-    )
-    ftune_parser.add_argument(
-        "--max-length", type=int, default=None, help="Maximum sequence length in tokens"
-    )
-    ftune_parser.add_argument(
-        "--pooling",
-        type=str,
-        choices=["eos", "mean", "max"],
         default=None,
-        help="Pooling strategy for 'cls' mode",
+        help="Optional override path to prompts configuration YAML file",
     )
     ftune_parser.add_argument(
-        "--no-lora", action="store_true", help="Disable LoRA (full model fine-tuning)"
-    )
-    ftune_parser.add_argument("--lora-r", type=int, default=None, help="LoRA rank r")
-    ftune_parser.add_argument(
-        "--lora-alpha", type=int, default=None, help="LoRA alpha scaling factor"
-    )
-    ftune_parser.add_argument(
-        "--no-mlflow", action="store_true", help="Disable MLflow experiment tracking"
-    )
-    ftune_parser.add_argument(
-        "--run-name", type=str, default=None, help="Run name for MLflow and checkpoints"
+        "--epochs",
+        type=float,
+        default=None,
+        help="Optional override for number of training epochs",
     )
 
     # --------------------------------------------------------------------------
@@ -197,41 +153,17 @@ def run_ftune(args: argparse.Namespace) -> None:
     overrides: dict[str, Any] = {}
     if args.mode is not None:
         overrides["mode"] = args.mode
-    if args.output_dir is not None:
-        overrides["output_dir"] = args.output_dir
     if args.prompts_config is not None:
         overrides["prompts_config_path"] = args.prompts_config
     if args.epochs is not None:
         overrides["num_train_epochs"] = args.epochs
-    if args.batch_size is not None:
-        overrides["per_device_train_batch_size"] = args.batch_size
-    if args.eval_batch_size is not None:
-        overrides["per_device_eval_batch_size"] = args.eval_batch_size
-    if args.lr is not None:
-        overrides["learning_rate"] = args.lr
-    if args.grad_accum is not None:
-        overrides["gradient_accumulation_steps"] = args.grad_accum
-    if args.max_length is not None:
-        overrides["max_length"] = args.max_length
-    if args.pooling is not None:
-        overrides["pooling_strategy"] = args.pooling
-    if args.no_lora:
-        overrides["use_lora"] = False
-    if args.lora_r is not None:
-        overrides["lora_r"] = args.lora_r
-    if args.lora_alpha is not None:
-        overrides["lora_alpha"] = args.lora_alpha
-    if args.no_mlflow:
-        overrides["use_mlflow"] = False
-    if args.run_name is not None:
-        overrides["run_name"] = args.run_name
 
     logger.info(
         "Initializing fine-tuning with config '%s' and model '%s'...", args.config, args.model
     )
     config = FineTuningConfig.from_yaml(args.config, **overrides)
     tuner = SLMFineTuner(model_name=args.model, config=config)
-    results = tuner.train(train_data_path=args.data, val_data_path=args.val_data)
+    results = tuner.train(train_data_path=args.data)
     logger.info(
         "Fine-tuning completed successfully! Checkpoint saved at: %s", results.get("checkpoint_dir")
     )

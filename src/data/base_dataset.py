@@ -128,6 +128,8 @@ class SLMDatasetBase(Dataset, ABC):
         self.encoded_samples: list[dict[str, torch.Tensor]] = [
             self._encode_sample(text, labels) for text, labels in self.raw_samples
         ]
+        if self.max_length is None and self.encoded_samples:
+            self.max_length = max(len(s["input_ids"]) for s in self.encoded_samples)
 
     def _ensure_tokenizer_ready(self) -> None:
         """Ensures the tokenizer has a valid `pad_token`."""
