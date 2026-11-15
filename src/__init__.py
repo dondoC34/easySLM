@@ -1,13 +1,16 @@
 """easySLM: A generic tool for fine-tuning Small Language Models on classification tasks."""
 
 from src.data import SLMClsDataset, SLMCollator, SLMDatasetBase, SLMJsonDataset
-from src.evaluation import (
+from src.fine_tuning import (
+    EarlyStoppingWindowCallback,
+    FineTuningConfig,
+    SLMFineTuner,
+    apply_lora_to_model,
     build_cls_compute_metrics,
     build_json_compute_metrics,
     compute_classification_metrics,
     preprocess_logits_for_json_metrics,
 )
-from src.fine_tuning import FineTuningConfig, SLMFineTuner, apply_lora_to_model
 from src.slm import (
     ModelFactory,
     PoolingStrategy,
@@ -23,6 +26,7 @@ from src.utils.model_card import find_best_model
 
 __version__ = "0.1.0"
 __all__ = [
+    "EarlyStoppingWindowCallback",
     "FineTuningConfig",
     "ModelFactory",
     "PoolingStrategy",

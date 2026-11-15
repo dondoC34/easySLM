@@ -16,6 +16,8 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
+from urllib.request import url2pathname
 
 from src.tracking.config import get_mlflow_config
 from src.tracking.server import check_mlflow_server_online
@@ -48,10 +50,9 @@ def resolve_storage_paths(config_path: str | Path | None = None) -> tuple[Path |
 
 def artifact_uri_to_path(artifact_uri: str) -> Path:
     """Converts a file:// URI or local filesystem path string to a Path object."""
-    if artifact_uri.startswith("file:///"):
-        return Path(artifact_uri[8:])
     if artifact_uri.startswith("file:"):
-        return Path(artifact_uri[5:])
+        parsed = urlparse(artifact_uri)
+        return Path(url2pathname(parsed.path))
     return Path(artifact_uri)
 
 

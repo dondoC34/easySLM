@@ -1,6 +1,8 @@
+"""Evaluation metrics, Trainer `compute_metrics` builders, and validation prediction extraction."""
+
 import logging
 from collections.abc import Callable, Sequence
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 import torch
@@ -14,8 +16,10 @@ from sklearn.metrics import (
     precision_score,
     recall_score,
 )
+from torch.utils.data import Dataset, Subset
 from transformers import EvalPrediction, PreTrainedTokenizerBase
 
+from src.data import SLMDatasetBase
 from src.slm.json_slm import SLMJson
 
 logger = logging.getLogger(__name__)
@@ -172,13 +176,17 @@ def _parse_class_list_string(
     return SLMJson.parse_class_list(raw_text, class_to_idx)
 
 
-def extract_json_binary_arrays(
+def _decode_and_parse_json_predictions(
     pred_ids: Any,
     label_ids: Any,
     tokenizer: PreTrainedTokenizerBase,
     classes: Sequence[str],
-) -> tuple[np.ndarray, np.ndarray, int, int, int]:
-    """Decodes token sequences and parses JSON class lists into `(y_true, y_pred, correct_tokens, total_tokens, valid_json_count)`."""
+) -> tuple[np.ndarray, np.ndarray, int, int, int, list[str], list[list[str]]]:
+    """Single-pass helper that decodes token sequences and parses JSON class lists.
+
+    Returns:
+        `(y_true, y_pred, correct_tokens, total_tokens, valid_json_count, raw_outputs, parsed_class_lists)`
+    """
     sorted_classes = sorted(list(dict.fromkeys(classes)))
     class_to_idx = {c: i for i, c in enumerate(sorted_classes)}
     num_classes = len(sorted_classes)
@@ -197,6 +205,8 @@ def extract_json_binary_arrays(
     num_samples = shift_labels.shape[0]
     y_true = np.zeros((num_samples, num_classes), dtype=np.int32)
     y_pred = np.zeros((num_samples, num_classes), dtype=np.int32)
+    raw_outputs: list[str] = []
+    parsed_class_lists: list[list[str]] = []
 
     total_tokens = 0
     correct_tokens = 0
@@ -216,6 +226,9 @@ def extract_json_binary_arrays(
         true_classes, _ = _parse_class_list_string(true_str, class_to_idx)
         pred_classes, is_valid_json = _parse_class_list_string(pred_str, class_to_idx)
 
+        raw_outputs.append(pred_str)
+        parsed_class_lists.append(pred_classes)
+
         if is_valid_json:
             valid_json_count += 1
 
@@ -224,6 +237,32 @@ def extract_json_binary_arrays(
         for c in pred_classes:
             y_pred[i, class_to_idx[c]] = 1
 
+    return (
+        y_true,
+        y_pred,
+        correct_tokens,
+        total_tokens,
+        valid_json_count,
+        raw_outputs,
+        parsed_class_lists,
+    )
+
+
+def extract_json_binary_arrays(
+    pred_ids: Any,
+    label_ids: Any,
+    tokenizer: PreTrainedTokenizerBase,
+    classes: Sequence[str],
+) -> tuple[np.ndarray, np.ndarray, int, int, int]:
+    """Decodes token sequences and parses JSON class lists into `(y_true, y_pred, correct_tokens, total_tokens, valid_json_count)`."""
+    y_true, y_pred, correct_tokens, total_tokens, valid_json_count, _, _ = (
+        _decode_and_parse_json_predictions(
+            pred_ids=pred_ids,
+            label_ids=label_ids,
+            tokenizer=tokenizer,
+            classes=classes,
+        )
+    )
     return y_true, y_pred, correct_tokens, total_tokens, valid_json_count
 
 
@@ -270,3 +309,90 @@ def build_json_compute_metrics(
         return metrics
 
     return compute_metrics
+
+
+def extract_validation_prediction_details(
+    pred_output: Any,
+    dataset: Dataset,
+    mode: Literal["cls", "json"],
+    classes: Sequence[str],
+    multi_label: bool,
+    tokenizer: PreTrainedTokenizerBase | None = None,
+) -> tuple[np.ndarray, np.ndarray, list[str], list[str], list[Any], list[float] | None]:
+    """Extracts binary arrays, raw texts, formatted raw/parsed outputs, and error severity scores
+
+    from `Trainer.predict(dataset)` output for post-training visual and tabular artifacts.
+
+    Returns:
+        `(y_true, y_pred, input_texts, raw_outputs, parsed_outputs, error_scores)`
+    """
+    raw_outputs: list[str] = []
+    parsed_outputs: list[Any] = []
+    error_scores: list[float] | None = None
+
+    if mode == "cls":
+        logits = pred_output.predictions
+        if isinstance(logits, tuple):
+            logits = logits[0]
+        logits_arr = np.asarray(logits, dtype=np.float32)
+
+        y_true, y_pred = extract_cls_binary_arrays(
+            logits=logits_arr,
+            labels=pred_output.label_ids,
+            multi_label=multi_label,
+        )
+
+        if multi_label:
+            probs = 1.0 / (1.0 + np.exp(-np.clip(logits_arr, -50.0, 50.0)))
+        else:
+            exp_l = np.exp(logits_arr - np.max(logits_arr, axis=-1, keepdims=True))
+            probs = exp_l / np.sum(exp_l, axis=-1, keepdims=True)
+
+        raw_outputs = [
+            ", ".join(f"{c}: {p:.2f}" for c, p in zip(classes, row_p, strict=False))
+            for row_p in probs
+        ]
+        parsed_outputs = [
+            [classes[i] for i in np.where(row_pred == 1)[0]]
+            if multi_label
+            else (classes[int(np.argmax(row_pred))] if np.any(row_pred == 1) else "")
+            for row_pred in y_pred
+        ]
+
+        # Severity score: highest probability assigned to an incorrect class
+        error_scores = []
+        for i in range(len(y_true)):
+            wrong_mask = y_true[i] == 0
+            error_scores.append(float(np.max(probs[i][wrong_mask])) if np.any(wrong_mask) else 0.0)
+    else:
+        assert tokenizer is not None
+        y_true, y_pred, _, _, _, raw_outputs, parsed_class_lists = (
+            _decode_and_parse_json_predictions(
+                pred_ids=pred_output.predictions,
+                label_ids=pred_output.label_ids,
+                tokenizer=tokenizer,
+                classes=classes,
+            )
+        )
+        parsed_outputs = [
+            parsed_classes if multi_label else (parsed_classes[0] if parsed_classes else "")
+            for parsed_classes in parsed_class_lists
+        ]
+
+    # Extract raw input texts from dataset
+    input_texts: list[str]
+    if isinstance(dataset, Subset):
+        inner_ds = dataset.dataset
+        input_texts = [
+            inner_ds.raw_samples[sub_idx][0]  # type: ignore[attr-defined]
+            for sub_idx in dataset.indices
+        ]
+    elif isinstance(dataset, SLMDatasetBase):
+        input_texts = [sample[0] for sample in dataset.raw_samples]
+    else:
+        input_texts = [
+            f"Sample_{i}"
+            for i in range(len(dataset))  # type: ignore[arg-type]
+        ]
+
+    return y_true, y_pred, input_texts, raw_outputs, parsed_outputs, error_scores

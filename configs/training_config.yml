@@ -28,12 +28,8 @@ prompts_config_path: "configs/prompts.yml"
 # ------------------------------------------------------------------------------
 # Output & Directories
 # ------------------------------------------------------------------------------
-# Directory where training checkpoints and state files will be stored.
-output_dir: "./checkpoints"
-
-# Maximum sequence length in tokens (truncates longer sequences).
-# Lowering this (e.g., 256 or 512) saves significant GPU VRAM during attention computation.
-max_length: 512
+# Directory where fine-tuned model checkpoints and model cards will be stored.
+output_dir: "./models/finetuned"
 
 # ------------------------------------------------------------------------------
 # Memory & Batching Optimization (Tuned for 8 GB GPU VRAM)
@@ -80,7 +76,7 @@ lora_target_modules: "all-linear"
 # Optimizer & Adaptive Learning Rate (Best Practices)
 # ------------------------------------------------------------------------------
 # Learning rate for AdamW optimizer.
-# If null, automatically selects: 2e-4 for LoRA, or 3e-5 for full-parameter fine-tuning.
+# If null, automatically selects: 2e-4 for LoRA, or 2e-5 for full-parameter fine-tuning.
 learning_rate: null
 
 # Learning rate scheduler type ('cosine', 'linear', 'constant_with_warmup').
@@ -125,6 +121,10 @@ val_split_ratio: 0.15
 # Class imbalance oversampling on training split ('max', 'sqrt', or null/'none' to disable).
 oversample_strategy: null
 oversample_max_factor: null
+
+# Early stopping: stop if early_stopping_metric does not improve for early_stopping_window consecutive evaluations (null to disable).
+early_stopping_window: 4
+early_stopping_metric: "eval_loss"
 
 # Random seed for dataset shuffling and reproducibility.
 seed: 42
