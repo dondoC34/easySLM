@@ -163,6 +163,13 @@ class TestEvaluation:
         res = fn(EvalPrediction(predictions=logits, label_ids=np.array([[1, 0], [0, 1]])))
         assert res["accuracy"] == pytest.approx(1.0)
 
+    def test_cls_extract_threshold_boundary_inclusive(self) -> None:
+        logits = np.array([[0.0, -3.0]])
+        labels = np.array([[1.0, 0.0]])
+        _, y_pred = extract_cls_binary_arrays(logits, labels, multi_label=True, threshold=0.5)
+        assert y_pred[0, 0] == 1
+        assert y_pred[0, 1] == 0
+
     def test_json_preprocess_and_compute_metrics(self, fake_tokenizer: FakeTokenizer) -> None:
         raw_logits = torch.randn(2, 5, 10)
         reduced = preprocess_logits_for_json_metrics((raw_logits,), torch.zeros(2, 5))
@@ -260,6 +267,33 @@ class TestSLMFineTuner:
         assert val_ds is not None
         assert len(val_ds) == 2
         assert len(train_ds) > 6
+
+    def test_prepare_datasets_takes_max_length_across_train_and_val(
+        self,
+        tmp_path: Path,
+        fake_tokenizer: FakeTokenizer,
+    ) -> None:
+        data_dir = tmp_path / "data_len_dir"
+        data_dir.mkdir()
+        (data_dir / "train.txt").write_text("hi ||| a\n", encoding="utf-8")
+        (data_dir / "val.txt").write_text(
+            "this is a much longer validation sample with many words ||| a\n",
+            encoding="utf-8",
+        )
+
+        mock_factory = MagicMock()
+        mock_factory.download_model.return_value = tmp_path
+        mock_factory._prepare_tokenizer.return_value = fake_tokenizer
+
+        tuner = SLMFineTuner(
+            model_name="tiny",
+            config=FineTuningConfig(mode="cls", use_mlflow=False),
+            factory=mock_factory,
+        )
+        train_ds, val_ds, _ = tuner.prepare_datasets(data_dir)
+        assert val_ds is not None
+        assert val_ds.max_length > train_ds.max_length
+        assert tuner.max_length == val_ds.max_length
 
     def test_train_pipeline_cls_mocked_trainer(
         self,

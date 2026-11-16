@@ -97,6 +97,29 @@ class TestTrackingServer:
 
 
 class TestTrackingTablesAndPlotting:
+    def test_single_label_confusion_matrix_normalizes_by_true_row(self) -> None:
+        # True: 1 economy, 1 tech. Both predicted as economy -> row-normalized recall is 1.0 for each.
+        y_true = np.array([[1, 0], [0, 1]])
+        y_pred = np.array([[1, 0], [1, 0]])
+        t = create_single_label_confusion_matrix_table(y_true, y_pred, ["economy", "tech"])
+        # Order: (economy, economy)=1.0, (economy, tech)=0.0, (tech, economy)=1.0, (tech, tech)=0.0
+        assert t["normalized_rate"] == [1.0, 0.0, 1.0, 0.0]
+
+    def test_validation_errors_selects_highest_error_scores(self) -> None:
+        y_true = np.array([[1, 0], [1, 0], [1, 0]])
+        y_pred = np.array([[0, 1], [0, 1], [0, 1]])
+        t = create_validation_errors_table(
+            input_texts=["low", "high", "mid"],
+            y_true=y_true,
+            y_pred=y_pred,
+            classes=["economy", "tech"],
+            raw_outputs=["r0", "r1", "r2"],
+            parsed_outputs=["tech", "tech", "tech"],
+            error_scores=[0.1, 0.9, 0.5],
+            max_errors_per_class=1,
+        )
+        assert t["input_text"] == ["high"]
+
     def test_tables_and_plots_single_and_multi(self) -> None:
         y_true = np.array([[1, 0], [0, 1], [1, 1]])
         y_pred = np.array([[1, 0], [1, 0], [1, 1]])

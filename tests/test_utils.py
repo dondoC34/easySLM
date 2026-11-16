@@ -136,6 +136,10 @@ class TestModelCard:
         assert clean_slug("Qwen/Qwen2.5-0.5B") == "Qwen2.5-0.5B"
         assert clean_slug("org/my model:v1") == "my_model_v1"
 
+    def test_get_metric_description_train_prefix(self) -> None:
+        assert "F1" in get_metric_description("train_f1_macro")
+        assert get_metric_description("train_accuracy") != "Custom evaluation metric"
+
     def test_generate_and_parse_model_card(self, tmp_path: Path) -> None:
         ckpt = tmp_path / "run_1"
         ckpt.mkdir()
