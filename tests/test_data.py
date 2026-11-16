@@ -131,6 +131,20 @@ class TestSLMDatasets:
         assert ds_multi.classes == ["economy", "politics", "sports", "tech"]
         assert ds_multi[0]["labels"].sum().item() == 2.0
 
+    def test_cls_dataset_max_length_exact_truncation(
+        self,
+        fake_tokenizer: FakeTokenizer,
+        single_label_file: Path,
+    ) -> None:
+        ds = SLMClsDataset(
+            data_path=single_label_file,
+            tokenizer=fake_tokenizer,
+            max_length=10,
+        )
+        item = ds[0]
+        assert item["input_ids"].shape[0] == 10
+        assert item["attention_mask"].shape[0] == 10
+
     def test_json_dataset_with_and_without_targets(
         self,
         fake_tokenizer: FakeTokenizer,
@@ -160,6 +174,19 @@ class TestSLMDatasets:
         assert ds_double_quotes.format_labels_as_string(["tech"]) == '["tech"]'
         assert "labels" not in ds_double_quotes[0]
         assert ds_double_quotes.get_collator().padding_side == "left"
+
+    def test_explicit_classes_are_sorted(
+        self,
+        fake_tokenizer: FakeTokenizer,
+        single_label_file: Path,
+    ) -> None:
+        ds = SLMClsDataset(
+            data_path=single_label_file,
+            tokenizer=fake_tokenizer,
+            classes=["tech", "economy", "sports", "tech"],
+        )
+        assert ds.classes == ["economy", "sports", "tech"]
+        assert ds.class_to_idx == {"economy": 0, "sports": 1, "tech": 2}
 
     def test_directory_loading_and_malformed_lines(
         self,

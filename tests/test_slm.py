@@ -134,6 +134,38 @@ class TestSLMCls:
         pred_single = model_single.predict(input_ids, attention_mask)
         assert all(len(p) == 1 for p in pred_single["predictions"])
 
+    def test_eos_pooling_ignores_right_padding(
+        self,
+        tiny_backbone: TinyBackbone,
+        fake_tokenizer: FakeTokenizer,
+    ) -> None:
+        model = SLMCls(
+            backbone=tiny_backbone,
+            classes=["a", "b"],
+            pooling_strategy="eos",
+            tokenizer=fake_tokenizer,
+        )
+        # (batch=2, seq_len=4, hidden_size=16) with distinct values per position
+        hidden_states = torch.arange(2 * 4 * 16, dtype=torch.float32).reshape(2, 4, 16)
+        attention_mask = torch.tensor([[1, 1, 0, 0], [1, 1, 1, 0]], dtype=torch.long)
+
+        pooled = model.pool_hidden_states(hidden_states, attention_mask)
+        assert torch.allclose(pooled[0], hidden_states[0, 1])
+        assert torch.allclose(pooled[1], hidden_states[1, 2])
+
+    def test_classes_are_deduplicated(
+        self,
+        tiny_backbone: TinyBackbone,
+        fake_tokenizer: FakeTokenizer,
+    ) -> None:
+        model = SLMCls(
+            backbone=tiny_backbone,
+            classes=["sports", "tech", "sports", " tech "],
+            tokenizer=fake_tokenizer,
+        )
+        assert model.classes == ["sports", "tech"]
+        assert model.num_classes == 2
+
     def test_invalid_init_and_gradient_checkpointing(
         self,
         tiny_backbone: TinyBackbone,
@@ -243,6 +275,25 @@ class TestSLMJson:
 
 
 class TestSerialization:
+    def test_save_preserves_non_default_pooling_strategy(
+        self,
+        tiny_backbone: TinyBackbone,
+        fake_tokenizer: FakeTokenizer,
+        tmp_path: Path,
+    ) -> None:
+        cls_model = SLMCls(
+            backbone=tiny_backbone,
+            classes=["a", "b"],
+            pooling_strategy="mean",
+            tokenizer=fake_tokenizer,
+        )
+        saved_cls = cls_model.save(
+            output_dir=tmp_path / "cls_mean_ckpt",
+            base_model_name="tiny-bb",
+        )
+        cfg = json.loads((saved_cls / "easyslm_config.json").read_text(encoding="utf-8"))
+        assert cfg["pooling_strategy"] == "mean"
+
     def test_save_and_load_cls_and_json(
         self,
         tiny_backbone: TinyBackbone,
