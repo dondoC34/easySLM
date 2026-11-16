@@ -1,13 +1,12 @@
 """CLI Subcommand Controller for 'easyslm mlflow'.
 
-Provides commands to start servers, inspect runs, display status, wipe data, and open the web dashboard.
+Provides commands to start servers, inspect runs, display status, and wipe data.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import webbrowser
 from collections.abc import Sequence
 
 from src.tracking.config import get_mlflow_config
@@ -19,10 +18,7 @@ from src.tracking.manager import (
     list_mlflow_runs,
     resolve_storage_paths,
 )
-from src.tracking.server import (
-    check_mlflow_server_online,
-    start_mlflow_server,
-)
+from src.tracking.server import start_mlflow_server
 
 logger = logging.getLogger("easySLM.tracking.cli")
 
@@ -51,7 +47,6 @@ def handle_mlflow_cli(args: Sequence[str]) -> int:
     - status: Probe server health and storage usage metrics
     - list / runs: Display formatted table of runs and metrics
     - best: Display best run by metric (default: eval_f1_macro) and optionally export assets
-    - ui / open: Open dashboard in default web browser
     """
     mlflow_parser = argparse.ArgumentParser(
         prog="easyslm mlflow",
@@ -203,26 +198,6 @@ def handle_mlflow_cli(args: Sequence[str]) -> int:
         type=str,
         default=None,
         help="Optional directory to copy the best run's artifacts.",
-    )
-
-    # 6. ui / open
-    ui_parser = subparsers.add_parser(
-        "ui",
-        aliases=["open"],
-        parents=[common_parser],
-        help="Open the MLflow web UI dashboard in the default browser.",
-    )
-    ui_parser.add_argument(
-        "--host",
-        type=str,
-        default=None,
-        help="Host IP address (overrides config).",
-    )
-    ui_parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help="Port number (overrides config).",
     )
 
     parsed = mlflow_parser.parse_args(args)
@@ -422,23 +397,6 @@ def handle_mlflow_cli(args: Sequence[str]) -> int:
                 return 1
 
         print("=" * 65 + "\n")
-        return 0
-
-    # Command: ui / open
-    if parsed.subcommand in ("ui", "open"):
-        cfg = get_mlflow_config(parsed.config)
-        server_cfg = cfg.get("server", {})
-        host = parsed.host or server_cfg.get("host", "127.0.0.1")
-        port = parsed.port or server_cfg.get("port", 5000)
-        url = f"http://{host}:{port}"
-
-        online = check_mlflow_server_online(host, port)
-        if not online:
-            print(f"\n[easySLM] Notice: MLflow tracking server appears offline at {url}.")
-            print("[easySLM] Launch it with: easyslm mlflow start\n")
-        else:
-            print(f"\n[easySLM] Opening MLflow Web UI at: {url}")
-            webbrowser.open(url)
         return 0
 
     return 0

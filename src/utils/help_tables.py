@@ -126,11 +126,6 @@ MLFLOW_COMMANDS: list[tuple[str, str, str]] = [
         "easyslm mlflow clear [OPTIONS]",
         "Clear MLflow database records and/or artifact files (-y, --artifacts-only).",
     ),
-    (
-        "ui (open)",
-        "easyslm mlflow ui [OPTIONS]",
-        "Open the MLflow Web dashboard in default browser.",
-    ),
 ]
 
 
