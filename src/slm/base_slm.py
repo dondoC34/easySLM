@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from src.data.base_dataset import SLMDatasetBase
+from src.data.base_dataset import SLMDatasetBase, get_backbone_max_length
 from src.data.cls_dataset import SLMClsDataset
 from src.data.json_dataset import SLMJsonDataset
 from src.utils.model_card import find_best_model
@@ -237,6 +237,7 @@ class SLMBase(nn.Module, ABC):
             multi_label=self.multi_label,
             include_targets=False,
             prompts_config_path=self.prompts_config_path,
+            backbone_max_length=get_backbone_max_length(self.config),
         )
         collator = dataset.get_collator(device=self.device)
 

@@ -39,6 +39,7 @@ class SLMJsonDataset(SLMDatasetBase):
         user_prompt_template: str | None = None,
         prompt_template: str | None = None,
         texts: Sequence[str] | None = None,
+        backbone_max_length: int | None = None,
     ):
         self.single_quotes = single_quotes
         super().__init__(
@@ -53,6 +54,7 @@ class SLMJsonDataset(SLMDatasetBase):
             user_prompt_template=user_prompt_template,
             prompt_template=prompt_template,
             texts=texts,
+            backbone_max_length=backbone_max_length,
         )
 
     def format_labels_as_string(self, labels: Sequence[str]) -> str:
@@ -98,6 +100,7 @@ class SLMJsonDataset(SLMDatasetBase):
         text: str,
         labels: list[str],
     ) -> dict[str, torch.Tensor]:
+        limit = self._effective_max_length()
         prompt_str = self.build_prompt(text)
         prompt_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)
 
@@ -108,13 +111,20 @@ class SLMJsonDataset(SLMDatasetBase):
             if eos_token_id is not None and (not target_ids or target_ids[-1] != eos_token_id):
                 target_ids = target_ids + [eos_token_id]
 
+            if limit is not None and len(prompt_ids) + len(target_ids) > limit:
+                truncated_text = self._truncate_text_to_fit(
+                    text, max_tokens=limit, extra_tokens=len(target_ids)
+                )
+                prompt_str = self.build_prompt(truncated_text)
+                prompt_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)
+
             full_ids = prompt_ids + target_ids
             # Set -100 on all prompt tokens so loss is computed strictly on target_ids (JSON list + eos_token)
             label_ids = [-100] * len(prompt_ids) + target_ids
 
-            if self.max_length is not None:
-                full_ids = full_ids[: self.max_length]
-                label_ids = label_ids[: self.max_length]
+            if limit is not None:
+                full_ids = full_ids[:limit]
+                label_ids = label_ids[:limit]
 
             attention_mask = [1] * len(full_ids)
             return {
@@ -123,8 +133,10 @@ class SLMJsonDataset(SLMDatasetBase):
                 "labels": torch.tensor(label_ids, dtype=torch.long),
             }
         else:
-            if self.max_length is not None:
-                prompt_ids = prompt_ids[: self.max_length]
+            if limit is not None and len(prompt_ids) > limit:
+                truncated_text = self._truncate_text_to_fit(text, max_tokens=limit)
+                prompt_str = self.build_prompt(truncated_text)
+                prompt_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)[:limit]
             attention_mask = [1] * len(prompt_ids)
             return {
                 "input_ids": torch.tensor(prompt_ids, dtype=torch.long),

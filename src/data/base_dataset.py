@@ -14,6 +14,17 @@ from src.data.collator import SLMCollator
 from src.utils.config import load_prompts_config
 
 
+def get_backbone_max_length(config: Any) -> int | None:
+    """Extracts the backbone's maximum context length from its Hugging Face config."""
+    if config is None:
+        return None
+    for attr in ("max_position_embeddings", "n_positions"):
+        val = getattr(config, attr, None)
+        if isinstance(val, int) and val > 0:
+            return val
+    return None
+
+
 class SLMDatasetBase(Dataset, ABC):
     """
     Abstract base Dataset for Small Language Model classification tasks.
@@ -45,6 +56,7 @@ class SLMDatasetBase(Dataset, ABC):
         user_prompt_template: str | None = None,
         prompt_template: str | None = None,
         texts: Sequence[str] | None = None,
+        backbone_max_length: int | None = None,
     ):
         super().__init__()
         if tokenizer is None:
@@ -55,6 +67,7 @@ class SLMDatasetBase(Dataset, ABC):
         self.data_path = Path(data_path) if data_path is not None else None
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.backbone_max_length = backbone_max_length
         self.include_targets = include_targets
         self.prompts_config_path = prompts_config_path
 
@@ -238,6 +251,41 @@ class SLMDatasetBase(Dataset, ABC):
     def encode_text_ids(self, text: str, add_special_tokens: bool = True) -> list[int]:
         """Tokenizes a text string into a list of integer token IDs."""
         return [int(x) for x in self.tokenizer.encode(text, add_special_tokens=add_special_tokens)]
+
+    def _effective_max_length(self) -> int | None:
+        """Returns the strictest configured token limit between `max_length` and `backbone_max_length`."""
+        limits = [x for x in (self.max_length, self.backbone_max_length) if x is not None]
+        return min(limits) if limits else None
+
+    def _truncate_text_to_fit(
+        self,
+        text: str,
+        max_tokens: int,
+        extra_tokens: int = 0,
+        marker: str = "[...]",
+    ) -> str:
+        """
+        Truncates only the raw `text` (appending `marker`) so that the full formatted prompt
+        plus `extra_tokens` fits within `max_tokens`, preserving system prompt and template suffixes.
+        """
+        shell_ids = self.encode_text_ids(self.build_prompt(marker), add_special_tokens=True)
+        available = max_tokens - len(shell_ids) - extra_tokens
+        if available <= 0:
+            return marker
+
+        text_ids = self.encode_text_ids(text, add_special_tokens=False)
+        candidate_ids = text_ids[:available]
+        while True:
+            candidate_text = self.tokenizer.decode(candidate_ids, skip_special_tokens=True)
+            truncated = f"{candidate_text}{marker}" if candidate_text else marker
+            total_len = (
+                len(self.encode_text_ids(self.build_prompt(truncated), add_special_tokens=True))
+                + extra_tokens
+            )
+            if total_len <= max_tokens or not candidate_ids:
+                return truncated
+            excess = max(1, total_len - max_tokens)
+            candidate_ids = candidate_ids[:-excess]
 
     @abstractmethod
     def _encode_sample(

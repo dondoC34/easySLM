@@ -166,6 +166,33 @@ class TestSLMCls:
         assert model.classes == ["sports", "tech"]
         assert model.num_classes == 2
 
+    def test_predict_texts_truncates_to_backbone_max_position_embeddings(
+        self,
+        tiny_backbone: TinyBackbone,
+        fake_tokenizer: FakeTokenizer,
+    ) -> None:
+        tiny_backbone.config.max_position_embeddings = 55
+        model = SLMCls(
+            backbone=tiny_backbone,
+            classes=["sports", "tech"],
+            tokenizer=fake_tokenizer,
+        )
+        captured_lengths: list[int] = []
+        orig_predict = model.predict
+
+        def spy_predict(
+            input_ids: torch.Tensor, attention_mask: torch.Tensor, **kwargs: object
+        ) -> dict[str, object]:
+            captured_lengths.append(int(input_ids.shape[1]))
+            return orig_predict(input_ids=input_ids, attention_mask=attention_mask, **kwargs)
+
+        model.predict = spy_predict  # type: ignore[method-assign]
+        long_text = " ".join(f"tok{i}" for i in range(100))
+        out = model.predict_texts([long_text])
+        assert len(out) == 1
+        assert len(captured_lengths) == 1
+        assert captured_lengths[0] <= 55
+
     def test_invalid_init_and_gradient_checkpointing(
         self,
         tiny_backbone: TinyBackbone,

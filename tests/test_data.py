@@ -262,3 +262,43 @@ class TestSLMDatasets:
         assert SLMDatasetBase.parse_raw_line("   ") is None
         assert SLMDatasetBase.parse_raw_line("hello ||| a, b") == ("hello", ["a", "b"])
         assert SLMDatasetBase.parse_raw_line("hello world") == ("hello world", None)
+
+    def test_cls_and_json_truncate_only_user_text_preserving_prompt_and_targets(
+        self,
+        fake_tokenizer: FakeTokenizer,
+        tmp_path: Path,
+    ) -> None:
+        long_text = " ".join(f"w{i}" for i in range(80))
+
+        ds_cls = SLMClsDataset(
+            texts=[long_text],
+            tokenizer=fake_tokenizer,
+            classes=["a", "b"],
+            include_targets=False,
+            backbone_max_length=55,
+        )
+        cls_ids = ds_cls[0]["input_ids"]
+        assert cls_ids.shape[0] <= 55
+        cls_decoded = fake_tokenizer.decode(cls_ids, skip_special_tokens=False)
+        assert "[...]" in cls_decoded
+        assert cls_decoded.endswith("Label:")
+        assert "w79" not in cls_decoded
+
+        json_file = tmp_path / "long_json.txt"
+        json_file.write_text(f"{long_text} ||| a, b\n", encoding="utf-8")
+        ds_json = SLMJsonDataset(
+            data_path=json_file,
+            tokenizer=fake_tokenizer,
+            include_targets=True,
+            backbone_max_length=95,
+        )
+        json_ids = ds_json[0]["input_ids"]
+        json_labels = ds_json[0]["labels"]
+        assert json_ids.shape[0] <= 95
+        assert json_ids[-1].item() == fake_tokenizer.eos_token_id
+        assert (json_labels != -100).any()
+        json_decoded = fake_tokenizer.decode(json_ids, skip_special_tokens=True)
+        assert "[...]" in json_decoded
+        assert "Labels:" in json_decoded
+        assert "['a', 'b']" in json_decoded
+        assert "w79" not in json_decoded
