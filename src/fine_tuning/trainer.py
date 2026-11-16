@@ -10,6 +10,7 @@ from typing import Any
 
 from torch.utils.data import Dataset
 from transformers import (
+    AutoConfig,
     PreTrainedTokenizerBase,
     Trainer,
     TrainerCallback,
@@ -18,6 +19,7 @@ from transformers import (
 )
 
 from src.data import SLMClsDataset, SLMDatasetBase, SLMJsonDataset
+from src.data.base_dataset import get_backbone_max_length
 from src.fine_tuning.callbacks import EarlyStoppingWindowCallback
 from src.fine_tuning.config import FineTuningConfig
 from src.fine_tuning.evaluation import (
@@ -102,6 +104,15 @@ class SLMFineTuner:
 
         dataset_cls = SLMJsonDataset if self.config.mode == "json" else SLMClsDataset
 
+        backbone_config = getattr(self.model, "config", None)
+        if backbone_config is None:
+            try:
+                model_path = self.factory.download_model(self.model_name)
+                backbone_config = AutoConfig.from_pretrained(model_path)
+            except Exception:
+                backbone_config = None
+        backbone_max_length = get_backbone_max_length(backbone_config)
+
         # If a directory is passed as train_data_path, auto-discover train.txt and optional val.txt
         resolved_train_path = Path(train_data_path)
         if resolved_train_path.is_dir():
@@ -120,6 +131,7 @@ class SLMFineTuner:
             classes=classes,
             include_targets=True,
             prompts_config_path=self.config.prompts_config_path,
+            backbone_max_length=backbone_max_length,
         )
         self.classes = full_dataset.classes
         self.multi_label = full_dataset.multi_label
@@ -146,6 +158,7 @@ class SLMFineTuner:
                 multi_label=self.multi_label,
                 include_targets=True,
                 prompts_config_path=self.config.prompts_config_path,
+                backbone_max_length=backbone_max_length,
             )
             if self.max_length is not None and val_ds.max_length is not None:
                 self.max_length = max(self.max_length, val_ds.max_length)

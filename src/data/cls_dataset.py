@@ -51,11 +51,14 @@ class SLMClsDataset(SLMDatasetBase):
         text: str,
         labels: list[str],
     ) -> dict[str, torch.Tensor]:
+        limit = self._effective_max_length()
         prompt_str = self.build_prompt(text)
         token_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)
 
-        if self.max_length is not None:
-            token_ids = token_ids[: self.max_length]
+        if limit is not None and len(token_ids) > limit:
+            truncated_text = self._truncate_text_to_fit(text, max_tokens=limit)
+            prompt_str = self.build_prompt(truncated_text)
+            token_ids = self.encode_text_ids(prompt_str, add_special_tokens=True)[:limit]
 
         attention_mask = [1] * len(token_ids)
         sample_dict: dict[str, torch.Tensor] = {
