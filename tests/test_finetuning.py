@@ -361,3 +361,63 @@ class TestSLMFineTuner:
         tuner.config.mode = "invalid"  # type: ignore[assignment]
         with pytest.raises(ValueError, match="Unsupported mode"):
             tuner.build_model(["a"])
+
+    def test_log_mlflow_run_metadata_logs_train_val_and_prompt(
+        self,
+        tmp_path: Path,
+        fake_tokenizer: FakeTokenizer,
+    ) -> None:
+        data_dir = tmp_path / "my_dataset"
+        data_dir.mkdir()
+        (data_dir / "train.txt").write_text("Hello ||| a\nWorld ||| b\n", encoding="utf-8")
+        (data_dir / "val.txt").write_text("Test ||| a\n", encoding="utf-8")
+
+        mock_factory = MagicMock()
+        mock_factory.download_model.return_value = tmp_path
+        mock_factory._prepare_tokenizer.return_value = fake_tokenizer
+
+        tuner = SLMFineTuner(
+            model_name="tiny",
+            config=FineTuningConfig(mode="cls", use_mlflow=False),
+            factory=mock_factory,
+        )
+        train_ds, val_ds, _ = tuner.prepare_datasets(data_dir)
+        assert val_ds is not None
+
+        from src.tracking.artifacts import log_run_metadata
+
+        with (
+            patch("mlflow.log_input") as mock_log_input,
+            patch("mlflow.log_params") as mock_log_params,
+            patch("mlflow.log_dict") as mock_log_dict,
+        ):
+            log_run_metadata(
+                train_data_path=data_dir,
+                base_dataset=train_ds,
+                mode="cls",
+                prompts_config_path=tuner.config.prompts_config_path,
+                classes=tuner.classes,
+                multi_label=tuner.multi_label,
+                train_dataset=train_ds,
+                eval_dataset=val_ds,
+            )
+
+        assert mock_log_input.call_count == 2
+        train_call, val_call = mock_log_input.call_args_list
+        assert train_call.kwargs["context"] == "training"
+        assert train_call.args[0].name == "my_dataset"
+        assert train_call.args[0].profile == {
+            "num_rows": 2,
+            "num_classes": 2,
+            "task_type": "single_label",
+        }
+
+        assert val_call.kwargs["context"] == "validation"
+        assert val_call.args[0].name == "my_dataset/val.txt"
+        assert val_call.args[0].profile["split_strategy"] == "explicit_file"
+        assert val_call.args[0].profile["num_rows"] == 1
+
+        mock_log_params.assert_called_once_with(
+            {"dataset": "my_dataset", "task_type": "single_label"}
+        )
+        assert mock_log_dict.call_args.args[1] == "prompt.json"

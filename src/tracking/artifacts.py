@@ -9,6 +9,7 @@ Coordinates rendering and uploading of:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from collections.abc import Sequence
@@ -162,3 +163,118 @@ def log_evaluation_artifacts(
 
     logger.info("Evaluation artifacts successfully logged (items: %d).", len(generated))
     return generated
+
+
+def _compute_file_digest(path: Path | None) -> str | None:
+    """Returns a short SHA-256 hex digest for a local dataset file without copying data."""
+    if path is None or not path.is_file():
+        return None
+    hasher = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            hasher.update(chunk)
+    return hasher.hexdigest()[:8]
+
+
+def log_run_metadata(
+    train_data_path: str | Path,
+    base_dataset: Any,
+    mode: str,
+    prompts_config_path: str | Path,
+    classes: Sequence[str],
+    multi_label: bool,
+    train_dataset: Any | None = None,
+    eval_dataset: Any | None = None,
+) -> None:
+    """Logs dataset inputs (with Profile & Schema, no data copy), params, and prompt.json to MLflow."""
+    import mlflow
+
+    dataset_name = Path(train_data_path).resolve().name
+    task_type = "multi_label" if multi_label else "single_label"
+    train_count = len(train_dataset) if train_dataset is not None else len(base_dataset)
+
+    try:
+        from mlflow.data.meta_dataset import MetaDataset
+        from mlflow.data.sources import LocalArtifactDatasetSource  # type: ignore[attr-defined]
+        from mlflow.types.schema import ColSpec, Schema
+
+        class _ProfiledMetaDataset(MetaDataset):
+            def __init__(self, profile_data: dict[str, Any] | None = None, **kwargs: Any) -> None:
+                self._profile = profile_data
+                super().__init__(**kwargs)
+
+            @property
+            def profile(self) -> dict[str, Any] | None:
+                return self._profile
+
+            def to_dict(self) -> dict[str, str]:
+                config = super().to_dict()
+                if self._profile is not None:
+                    config["profile"] = json.dumps(self._profile)
+                return config
+
+        schema = Schema([ColSpec("string", "text"), ColSpec("string", "labels")])
+        train_source = Path(getattr(base_dataset, "data_path", None) or train_data_path)
+        common_meta = {"num_classes": len(classes), "task_type": task_type}
+
+        train_profile = {"num_rows": train_count, **common_meta}
+        mlflow.log_input(
+            _ProfiledMetaDataset(
+                profile_data=train_profile,
+                source=LocalArtifactDatasetSource(str(train_source)),
+                name=dataset_name,
+                digest=_compute_file_digest(train_source),
+                schema=schema,
+            ),
+            context="training",
+            tags={k: str(v) for k, v in train_profile.items()},
+        )
+
+        if eval_dataset is not None:
+            val_source = Path(getattr(eval_dataset, "data_path", None) or train_source)
+            is_explicit = val_source.resolve() != train_source.resolve()
+            val_name = (
+                f"{dataset_name}/{val_source.name}"
+                if (is_explicit and Path(train_data_path).is_dir())
+                else (val_source.name if is_explicit else f"{dataset_name} (val split)")
+            )
+            val_profile = {
+                "num_rows": len(eval_dataset),
+                "split_strategy": "explicit_file" if is_explicit else "random_split",
+                **common_meta,
+            }
+            mlflow.log_input(
+                _ProfiledMetaDataset(
+                    profile_data=val_profile,
+                    source=LocalArtifactDatasetSource(str(val_source)),
+                    name=val_name,
+                    digest=_compute_file_digest(val_source),
+                    schema=schema,
+                ),
+                context="validation",
+                tags={k: str(v) for k, v in val_profile.items()},
+            )
+    except Exception as e:
+        logger.warning("Failed logging MLflow dataset input '%s': %s", dataset_name, e)
+
+    try:
+        mlflow.log_params({"dataset": dataset_name, "task_type": task_type})
+    except Exception as e:
+        logger.warning("Failed logging MLflow dataset params: %s", e)
+
+    try:
+        mlflow.log_dict(
+            {
+                "mode": mode,
+                "prompts_config_path": str(prompts_config_path),
+                "system_prompt": base_dataset.system_prompt,
+                "user_prompt_template": base_dataset.user_prompt_template,
+                "prompt_template": base_dataset.prompt_template,
+                "classes": list(classes),
+                "multi_label": multi_label,
+                "example_rendered_prompt": base_dataset.build_prompt("<TEXT>"),
+            },
+            "prompt.json",
+        )
+    except Exception as e:
+        logger.warning("Failed logging MLflow 'prompt.json' artifact: %s", e)

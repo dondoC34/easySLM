@@ -30,7 +30,7 @@ from src.fine_tuning.evaluation import (
 )
 from src.fine_tuning.lora import apply_lora_to_model, log_gpu_memory
 from src.slm import ModelFactory, SLMBase, SLMCls, SLMJson
-from src.tracking.artifacts import log_evaluation_artifacts
+from src.tracking.artifacts import log_evaluation_artifacts, log_run_metadata
 from src.tracking.config import configure_mlflow_env, get_mlflow_config
 from src.tracking.tables import create_validation_errors_table
 from src.utils.config import get_project_root
@@ -418,6 +418,18 @@ class SLMFineTuner:
             )
 
         with run_ctx:
+            if self.config.use_mlflow:
+                log_run_metadata(
+                    train_data_path=train_data_path,
+                    base_dataset=base_dataset,
+                    mode=self.config.mode,
+                    prompts_config_path=self.config.prompts_config_path,
+                    classes=self.classes,
+                    multi_label=self.multi_label,
+                    train_dataset=train_dataset,
+                    eval_dataset=eval_dataset,
+                )
+
             train_result = self.trainer.train()
             train_metrics = train_result.metrics
             logger.info("Training completed | Train Metrics: %s", train_metrics)
