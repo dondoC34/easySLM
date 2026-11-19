@@ -174,6 +174,8 @@ class TestEvaluation:
         raw_logits = torch.randn(2, 5, 10)
         reduced = preprocess_logits_for_json_metrics((raw_logits,), torch.zeros(2, 5))
         assert reduced.shape == (2, 5)
+        already_reduced = preprocess_logits_for_json_metrics(reduced, torch.zeros(2, 5))
+        assert torch.equal(already_reduced, reduced)
 
         ids_a = fake_tokenizer.encode("['economy']", add_special_tokens=False)
         ids_b = fake_tokenizer.encode("['tech']", add_special_tokens=False)

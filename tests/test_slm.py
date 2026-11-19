@@ -271,6 +271,21 @@ class TestSLMJson:
         assert out["loss"] is not None
         assert out["logits"].shape[:2] == (1, 4)
 
+        # All-masked labels returns zero loss safely
+        all_masked = torch.full_like(labels, -100)
+        out_masked = model(input_ids, attention_mask, labels=all_masked)
+        assert out_masked["loss"] is not None
+        assert float(out_masked["loss"].item()) == pytest.approx(0.0)
+
+        # On-eval token reduction returns 2D token IDs instead of 3D vocab logits
+        model.eval()
+        model._return_token_ids_on_eval = True  # type: ignore[attr-defined]
+        out_reduced = model(input_ids, attention_mask, labels=labels)
+        assert out_reduced["logits"].shape == (1, 4)
+        assert out_reduced["logits"].dtype == torch.int64
+        model._return_token_ids_on_eval = False  # type: ignore[attr-defined]
+        model.train()
+
         pred = model.predict(input_ids, attention_mask, max_new_tokens=len(ids))
         assert pred["predictions"] == [["economy", "tech"]]
 

@@ -367,6 +367,7 @@ class SLMFineTuner:
             compute_metrics_fn = build_cls_compute_metrics(multi_label=self.multi_label)
             preprocess_logits_fn = None
         else:
+            model._return_token_ids_on_eval = True
             compute_metrics_fn = build_json_compute_metrics(
                 tokenizer=self.tokenizer,
                 classes=self.classes,

@@ -85,12 +85,17 @@ class SLMJson(SLMBase):
         """
         Computes causal autoregressive CrossEntropyLoss strictly on the unmasked assistant tokens (`labels != -100`).
         Shifts logits left by 1 and labels right by 1 so token `t` predicts token `t + 1`.
+        Filters to valid target positions before casting to float32 to avoid materializing a full
+        `(batch_size, seq_len, vocab_size)` float32 tensor in GPU memory.
         """
-        shift_logits = logits[..., :-1, :].contiguous().float()
-        shift_labels = labels[..., 1:].contiguous()
+        shift_logits = logits[..., :-1, :]
+        shift_labels = labels[..., 1:]
+        valid_mask = shift_labels != -100
+        if not valid_mask.any():
+            return shift_logits.sum() * 0.0
         return self.loss_fn(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1),
+            shift_logits[valid_mask].float(),
+            shift_labels[valid_mask],
         )
 
     def forward(
@@ -98,11 +103,15 @@ class SLMJson(SLMBase):
         input_ids: torch.Tensor,
         attention_mask: torch.Tensor,
         labels: torch.Tensor | None = None,
+        return_token_ids: bool = False,
         **kwargs,
     ) -> dict[str, Any]:
         """
         Forward pass through the CausalLM backbone.
         Accepts exclusively tensor inputs (`input_ids`, `attention_mask`, and optional `labels`).
+        When `return_token_ids=True` (or `self._return_token_ids_on_eval` is active during evaluation),
+        returns `logits.argmax(dim=-1)` inside `"logits"` before Accelerate's `convert_outputs_to_fp32`
+        wrapper can upcast the full `(batch_size, seq_len, vocab_size)` tensor to float32.
         """
         input_ids = input_ids.to(self.device)
         attention_mask = attention_mask.to(self.device)
@@ -110,6 +119,7 @@ class SLMJson(SLMBase):
         outputs = self.backbone(
             input_ids=input_ids,
             attention_mask=attention_mask,
+            use_cache=False,
             **kwargs,
         )
         logits = outputs.logits
@@ -117,6 +127,11 @@ class SLMJson(SLMBase):
         if labels is not None:
             labels = labels.to(self.device)
             loss = self.compute_loss(logits, labels)
+
+        if return_token_ids or (
+            not self.training and getattr(self, "_return_token_ids_on_eval", False)
+        ):
+            logits = logits.argmax(dim=-1)
 
         return {
             "loss": loss,

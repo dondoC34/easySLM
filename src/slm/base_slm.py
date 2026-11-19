@@ -40,6 +40,7 @@ class SLMBase(nn.Module, ABC):
 
     TASK_MODE: Literal["cls", "json"] = "cls"
     accepts_loss_kwargs: bool = False
+    _return_token_ids_on_eval: bool = False
 
     def __init__(
         self,
