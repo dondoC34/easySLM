@@ -40,6 +40,8 @@ class EarlyStoppingWindowCallback(TrainerCallback):
     ) -> None:
         if self._training_ended:
             return
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         if not metrics or self.metric_name not in metrics:
             logger.warning(
                 "EarlyStoppingWindowCallback: metric '%s' missing from eval metrics; skipping.",

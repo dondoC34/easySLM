@@ -159,10 +159,13 @@ def preprocess_logits_for_json_metrics(
     """Reduces CausalLM logits from `(batch_size, seq_len, vocab_size)` to `(batch_size, seq_len)`
 
     token IDs via `argmax(dim=-1)` immediately on GPU during evaluation to save VRAM.
+    If `logits` is already 2D `(batch_size, seq_len)` (reduced inside `SLMJson.forward`), returns it as-is.
     """
     if isinstance(logits, tuple):
         logits = logits[0]
-    return logits.argmax(dim=-1)
+    if logits.ndim == 3:
+        return logits.argmax(dim=-1)
+    return logits
 
 
 def _parse_class_list_string(

@@ -11,6 +11,7 @@ from transformers import TrainingArguments
 
 from src.slm import PoolingStrategy
 from src.utils.config import load_yaml
+from src.utils.device import is_native_bf16_supported
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ class FineTuningConfig:
         dynamically determining precision flags (bf16/fp16), warmup steps, and learning rate.
         """
         use_cuda = torch.cuda.is_available()
-        use_bf16 = use_cuda and torch.cuda.is_bf16_supported()
+        use_bf16 = use_cuda and is_native_bf16_supported()
         use_fp16 = use_cuda and not use_bf16
 
         effective_lr = self.learning_rate
