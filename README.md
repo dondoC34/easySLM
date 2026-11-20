@@ -1,12 +1,16 @@
 # easySLM
 
+[![Docs](https://img.shields.io/badge/docs-GitHub%20Pages-blue?logo=materialformkdocs&logoColor=white)](https://dondoc34.github.io/easySLM/)
 [![CI](https://github.com/dondoC34/easySLM/actions/workflows/ci.yml/badge.svg)](https://github.com/dondoC34/easySLM/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.6%2B-ee4c2c.svg)](https://pytorch.org/)
 [![HuggingFace](https://img.shields.io/badge/%F0%9F%A4%97-Transformers%20%26%20PEFT-orange)](https://huggingface.co/)
+[![Pydantic v2](https://img.shields.io/badge/Pydantic-v2-E92063.svg)](https://docs.pydantic.dev/)
 [![MLflow](https://img.shields.io/badge/MLflow-Tracking-0194E2.svg)](https://mlflow.org/)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+> **Full Documentation (Tutorials, CLI & API Reference):** [https://dondoc34.github.io/easySLM/](https://dondoc34.github.io/easySLM/)
 
 **easySLM** is a lightweight, generic, and production-ready framework for fine-tuning and running inference with **Small Language Models (SLMs)** (e.g., Qwen 2.5, LLaMA 3.2, Gemma 2, SmolLM2) on single-label and multi-label text classification tasks.
 
@@ -22,15 +26,18 @@ Designed for developer ergonomics and constrained hardware, easySLM runs comfort
 - **Automatic Task Detection (Single-Label & Multi-Label)**:
   - Automatically infers whether a dataset is **single-label** (1 label per sample $\rightarrow$ `CrossEntropyLoss` + Softmax) or **multi-label** ($>1$ label on any sample $\rightarrow$ `BCEWithLogitsLoss` + Sigmoid with top-1 fallback).
   - Supports minority-class **oversampling** (`max` or `sqrt` strategies with optional cap factor) and automatic train/validation splitting.
+- **Pydantic-Validated Configuration (Single Source of Truth)**:
+  - `FineTuningConfig` is a strict Pydantic v2 `BaseModel` (`extra="forbid"`, `validate_assignment=True`) with built-in defaults for every parameter—no external YAML file is required to run training, while custom YAML files or dictionaries remain fully supported.
+- **Centralized, CWD-Independent Storage (`~/.easyslm/`)**:
+  - Base-model caches, fine-tuned checkpoints, batch predictions, and MLflow tracking data default to `~/.easyslm/` (overridable globally via `EASYSLM_HOME` or per-call via parameters/configs), keeping repositories clean and notebooks working from any directory.
 - **8 GB VRAM Optimization & Early Stopping**:
   - Combines LoRA adapters, gradient checkpointing, automatic mixed precision (`bf16`/`fp16`), and on-GPU logit `argmax` reduction during generative evaluation.
   - Includes `EarlyStoppingWindowCallback`, which snapshots only trainable parameters in CPU memory whenever a validation metric improves and automatically restores the best weights at the end of training.
-- **Self-Contained Checkpoints & Automated Model Cards**:
-  - Every fine-tuning run saves a self-contained checkpoint containing LoRA adapters (or full weights), `classifier.pt` (for `cls` mode), tokenizer files, `easyslm_config.json`, a snapshot of the prompt templates (`prompt_config.yml`), diagnostic plots (`plots/`), JSON tables (`tables/`), and a **Markdown Model Card** (`model_card_*.md`) with YAML frontmatter.
-- **Automated "Best Model" Discovery for Inference**:
-  - `easyslm predict` and `SLMBase.from_best_model()` automatically scan saved Model Cards, rank checkpoints by any target metric (e.g., `eval_f1_macro`, `eval_accuracy`, `eval_loss`), and load the best model for batch inference.
+- **Self-Contained Checkpoints, Model Cards & Auto-Best Inference**:
+  - Every fine-tuning run saves LoRA adapters (or full weights), `classifier.pt` (for `cls` mode), tokenizer files, `easyslm_config.json`, a prompt snapshot (`prompt_config.yml`), diagnostic `plots/` & `tables/`, and a **Markdown Model Card** (`model_card_*.md`).
+  - `easyslm predict` and `SLMBase.from_best_model()` automatically rank saved Model Cards by any metric (e.g., `eval_f1_macro`, `eval_loss`) and load the best checkpoint.
 - **Full MLflow Experiment Tracking & Diagnostics**:
-  - Tracks hyperparameters, learning curves, system/GPU metrics, confusion matrices (single-label and multi-label cross-label), per-class metric heatmaps, label cardinality distributions, and validation error tables in a local SQLite backend (`mlflow.db`), managed through `easyslm mlflow`.
+  - Logs hyperparameters, learning curves, system/GPU metrics, confusion matrices, per-class metric heatmaps, label cardinality distributions, and validation error tables to `~/.easyslm/mlflow.db`, managed via `easyslm mlflow`.
 
 ---
 
@@ -39,25 +46,26 @@ Designed for developer ergonomics and constrained hardware, easySLM runs comfort
 ```text
 easySLM/
 ├── configs/
-│   ├── prompts.yml                # System, user, and full prompt templates for CLS and JSON modes
-│   └── training_config.yml        # Hyperparameters, LoRA, early stopping, oversampling, and Trainer settings
+│   ├── prompts.yml                  # Optional prompt templates for CLS and JSON modes
+│   └── training_config.yml          # Optional YAML template to customize FineTuningConfig defaults
 ├── data/
-│   └── agnews_tiny/               # Balanced toy AG News dataset (train.txt: 200, val.txt: 40)
-├── notebooks/                     # Minimal interactive fine-tuning & prediction notebooks
-├── models/
-│   └── finetuned/                 # Saved checkpoints, Model Cards, plots, and evaluation tables
-├── predictions/                   # Batch inference outputs (.txt and .json)
+│   └── agnews_tiny/                 # Balanced toy AG News dataset (train.txt: 200, val.txt: 40)
+├── docs/                            # MkDocs documentation source (tutorials, CLI, API reference)
+├── notebooks/
+│   ├── fine_tune.ipynb              # Minimal end-to-end fine-tuning & inference quickstart
+│   └── customize_fine_tuning.ipynb  # Full configuration & customization walkthrough
 ├── src/
-│   ├── cli.py                     # Main CLI entrypoint (`ftune`, `predict`, `mlflow`, `info`)
-│   ├── data/                      # Dataset classes (SLMDatasetBase, SLMClsDataset, SLMJsonDataset) & collator
-│   ├── fine_tuning/               # FineTuningConfig, SLMFineTuner, LoRA setup, callbacks, & evaluation metrics
-│   ├── slm/                       # SLMBase, SLMCls, SLMJson, ModelFactory, & checkpoint serialization
-│   ├── tracking/                  # MLflow server lifecycle, run manager, diagnostic plots, & tables
-│   └── utils/                     # Config loaders, CUDA diagnostics, CLI help tables, & Model Card parser
-├── main.py                        # CLI entrypoint alias
-├── mlflow-config.yml              # MLflow server and tracking configuration
-├── pyproject.toml                 # Project metadata, dependencies, and linter/type-checker settings
-└── README.md                      # Project documentation
+│   ├── cli.py                       # Main CLI entrypoint (`ftune`, `predict`, `mlflow`, `info`)
+│   ├── data/                        # Dataset classes (SLMDatasetBase, SLMClsDataset, SLMJsonDataset) & collator
+│   ├── fine_tuning/                 # Pydantic FineTuningConfig, SLMFineTuner, LoRA, callbacks, & metrics
+│   ├── slm/                         # SLMBase, SLMCls, SLMJson, ModelFactory, & checkpoint serialization
+│   ├── tracking/                    # MLflow server lifecycle, run manager, diagnostic plots, & tables
+│   └── utils/                       # EASYSLM_HOME path helpers, YAML/prompt loaders, CUDA info, & Model Cards
+├── tests/                           # Unit test suite (pytest)
+├── mlflow-config.yml                # Optional MLflow server and tracking overrides
+├── mkdocs.yml                       # MkDocs Material & mkdocstrings configuration
+├── pyproject.toml                   # Project metadata, dependencies, and Ruff/MyPy/Pytest settings
+└── README.md                        # Project documentation
 ```
 
 ---
@@ -72,7 +80,7 @@ easySLM/
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/easySLM.git
+git clone https://github.com/dondoC34/easySLM.git
 cd easySLM
 
 # Create virtual environment and install all dependencies
@@ -86,6 +94,30 @@ Alternatively, using standard `pip`:
 
 ```bash
 pip install -e .
+```
+
+---
+
+## Default Storage (`~/.easyslm/` & `EASYSLM_HOME`)
+
+To stay independent of the current working directory and work seamlessly when installed as a library, all runtime artifacts default to `~/.easyslm/`:
+
+| Artifact | Default Path | Override Options |
+| :--- | :--- | :--- |
+| **Base HF Model Cache** | `~/.easyslm/models` | `ModelFactory(cache_dir=...)` |
+| **Fine-Tuned Checkpoints** | `~/.easyslm/finetuned` | `FineTuningConfig(output_dir=...)`, YAML `output_dir`, `SLMBase.from_best_model(models_dir=...)`, `--models-dir` |
+| **Batch Predictions** | `~/.easyslm/predictions` | `easyslm predict --output-dir ...`, `model.predict_file_or_dir(output_dir=...)` |
+| **MLflow SQLite DB** | `~/.easyslm/mlflow.db` | `mlflow-config.yml` (`backend_store_uri`), `FineTuningConfig(mlflow_tracking_uri=...)`, `--backend-store-uri` |
+| **MLflow Artifacts** | `~/.easyslm/mlruns` | `mlflow-config.yml` (`default_artifact_root`), `--default-artifact-root` |
+
+To relocate **all** default directories at once (e.g., to a secondary drive or shared volume), set the `EASYSLM_HOME` environment variable:
+
+```bash
+# Linux / macOS
+export EASYSLM_HOME=/data/easyslm
+
+# Windows (PowerShell)
+$env:EASYSLM_HOME = "D:\easyslm"
 ```
 
 ---
@@ -107,7 +139,7 @@ Tech giants unveiled quantum computing chips for artificial intelligence. ||| te
   - If every sample in the dataset has **exactly 1 label**, easySLM automatically configures **Single-Label** classification (`multi_label=False`).
   - If any sample has **2 or more labels**, easySLM automatically configures **Multi-Label** classification (`multi_label=True`).
 - **Flexible Input Paths (`--data`)**:
-  - **Single `.txt` file**: Automatically split into training and validation sets according to `val_split_ratio` in `configs/training_config.yml` (default `0.15`).
+  - **Single `.txt` file**: Automatically split into training and validation sets according to `val_split_ratio` in `FineTuningConfig` (default `0.15`).
   - **Directory path**: If you pass a directory containing `train.txt` and `val.txt` (or `validation.txt`), easySLM automatically uses them as the dedicated training and validation splits.
 
 ### Inference Data
@@ -130,7 +162,7 @@ uv run easyslm mlflow
 
 ### 1. Fine-Tuning (`easyslm ftune`)
 
-Fine-tune any compatible Hugging Face SLM using `configs/training_config.yml` and `configs/prompts.yml`.
+Fine-tune any compatible Hugging Face SLM using built-in `FineTuningConfig` defaults—no YAML file is required. Pass `--config` and/or `--prompts-config` whenever you want to customize training parameters or prompt templates from YAML files.
 
 #### Recommended Base Models
 | Hugging Face Model ID | Size / VRAM | Highlights |
@@ -146,14 +178,14 @@ Fine-tune any compatible Hugging Face SLM using `configs/training_config.yml` an
 | :--- | :--- | :--- |
 | `--model` | `Qwen/Qwen2.5-0.5B` | Hugging Face model ID or local path |
 | `--data` | `data/agnews_tiny` | Path to a `.txt` dataset file or a directory containing `train.txt` (and optional `val.txt`) |
-| `--type` | *(from config)* | Optional classification mode override: `cls` (linear head) or `json` (generative list) |
-| `--config` | `configs/training_config.yml` | Path to the training configuration YAML file |
-| `--prompts-config` | *(from config)* | Optional override path to the prompt templates YAML file |
-| `--epochs` | *(from config)* | Optional override for `num_train_epochs` |
+| `--type` | *(built-in: `cls` / from config)* | Optional classification mode override: `cls` (linear head) or `json` (generative list) |
+| `--config` | *(none — built-in defaults)* | Optional path to a YAML training configuration file to customize `FineTuningConfig` |
+| `--prompts-config` | *(built-in / from config)* | Optional override path to a custom prompt templates YAML file |
+| `--epochs` | *(built-in: `3.0` / from config)* | Optional override for `num_train_epochs` |
 
 #### Examples
 ```bash
-# 1. Direct Classification (CLS mode) on the built-in agnews_tiny toy dataset
+# 1. Direct Classification (CLS mode) using built-in FineTuningConfig defaults
 uv run easyslm ftune \
   --model Qwen/Qwen2.5-0.5B \
   --type cls \
@@ -167,7 +199,7 @@ uv run easyslm ftune \
   --data data/agnews_tiny \
   --epochs 3
 
-# 3. Fine-tuning with a custom config and prompt template
+# 3. Customize fine-tuning with an optional YAML config and prompt template
 uv run easyslm ftune \
   --model HuggingFaceTB/SmolLM2-1.7B \
   --type cls \
@@ -177,8 +209,8 @@ uv run easyslm ftune \
 ```
 
 #### What Happens After Fine-Tuning
-Each run creates a timestamped folder `<output_dir>/<model_slug>_<type>_<YYYYMMDD_HHMMSS>/` containing:
-- `adapter_model.safetensors` & `adapter_config.json` (or full backbone weights when `use_lora: false`)
+Each run creates a timestamped folder `<output_dir>/<model_slug>_<type>_<YYYYMMDD_HHMMSS>/` (defaulting to `~/.easyslm/finetuned/...`) containing:
+- `adapter_model.safetensors` & `adapter_config.json` (or full backbone weights when `use_lora=False`)
 - `classifier.pt` (trained `LayerNorm` + `Linear` classification head in `cls` mode)
 - Tokenizer files (`tokenizer.json`, `tokenizer_config.json`)
 - `easyslm_config.json` (task metadata, sorted class list, pooling strategy, `multi_label` flag)
@@ -197,34 +229,33 @@ Run batch predictions on a single `.txt` file or an entire directory of `.txt` f
 | Option | Default | Description |
 | :--- | :--- | :--- |
 | `--model` | *(auto-best)* | Path to a specific checkpoint directory. If omitted, selects the best model from `--models-dir` |
-| `--models-dir` | `./models/finetuned` | Directory searched for `model_card_*.md` files when `--model` is omitted |
+| `--models-dir` | `~/.easyslm/finetuned` | Directory searched for `model_card_*.md` files when `--model` is omitted (respects `EASYSLM_HOME`) |
 | `--type` | `cls` | Model architecture mode to search for (`cls` or `json`) |
 | `--data` | `data/agnews_tiny/val.txt` | Path to `.txt` file or directory of `.txt` files to classify |
-| `--output-dir` | `predictions` | Output directory where `.txt` and `.json` predictions are written |
+| `--output-dir` | `~/.easyslm/predictions` | Output directory where `.txt` and `.json` predictions are written (respects `EASYSLM_HOME`) |
 | `--metric` | `eval_f1_macro` | Metric used to rank Model Cards when `--model` is omitted (e.g., `eval_f1_macro`, `eval_accuracy`, `eval_loss`) |
 | `--batch-size` | `8` | Inference batch size |
 | `--prompts-config` | *(checkpoint config)* | Optional override for prompt templates (defaults to the checkpoint's `prompt_config.yml`) |
 
 #### Examples
 ```bash
-# Automatic best-model discovery (ranked by eval_f1_macro)
+# Automatic best-model discovery (ranked by eval_f1_macro, outputs to ~/.easyslm/predictions)
 uv run easyslm predict \
   --type cls \
-  --data data/agnews_tiny/val.txt \
-  --output-dir predictions/cls_best
+  --data data/agnews_tiny/val.txt
 
-# Automatic best-model discovery ranked by lowest validation loss
+# Automatic best-model discovery ranked by lowest validation loss with custom output folder
 uv run easyslm predict \
   --type cls \
   --metric eval_loss \
   --data data/agnews_tiny/val.txt \
-  --output-dir predictions/cls_lowest_loss
+  --output-dir ./predictions/cls_lowest_loss
 
 # Inference using an explicit checkpoint directory
 uv run easyslm predict \
-  --model models/finetuned/Qwen2.5-0.5B_cls_20261114_190335 \
+  --model ~/.easyslm/finetuned/Qwen2.5-0.5B_cls_20261120_120000 \
   --data data/agnews_tiny/val.txt \
-  --output-dir predictions/cls_explicit
+  --output-dir ./predictions/cls_explicit
 ```
 
 #### Prediction Output Files
@@ -236,7 +267,7 @@ For each input `<stem>.txt`, two files are generated in `--output-dir`:
 
 ### 3. Experiment Tracking (`easyslm mlflow`)
 
-easySLM provides a built-in CLI suite to manage the local MLflow tracking server, inspect runs, export best artifacts, and clean storage (configured via `mlflow-config.yml`):
+easySLM provides a built-in CLI suite to manage the local MLflow tracking server, inspect runs, export best artifacts, and clean storage. By default, MLflow stores data in `~/.easyslm/mlflow.db` and `~/.easyslm/mlruns` (overridable via `EASYSLM_HOME`, `mlflow-config.yml`, or CLI flags):
 
 ```bash
 # Display MLflow subcommand reference table
@@ -270,45 +301,61 @@ uv run easyslm info
 
 ---
 
-## Configuration Files
+## Configuration Reference
 
-### 1. Training Configuration (`configs/training_config.yml`)
-All training hyperparameters and hardware settings are centralized in `configs/training_config.yml`:
+### 1. Fine-Tuning Configuration (`FineTuningConfig`)
+
+[`FineTuningConfig`](src/fine_tuning/config.py) is a **Pydantic v2 `BaseModel`** serving as the single source of truth for all fine-tuning defaults and validation:
+- **Strict key validation (`extra="forbid"`)**: passing any unrecognized key raises a `ValidationError` listing all accepted keys and their defaults.
+- **Range & type validation (`validate_assignment=True`)**: validates types and numeric bounds on creation and mutation.
+- **Multiple instantiation methods**:
+  - `FineTuningConfig()` or `FineTuningConfig(mode="cls", num_train_epochs=2.0)` — built-in defaults + keyword overrides.
+  - `FineTuningConfig.from_dict(data, **overrides)` — load from a partial or empty dictionary with optional overrides.
+  - `FineTuningConfig.from_yaml("configs/training_config.yml", **overrides)` — load from an optional YAML file with optional keyword overrides.
+  - Passing `config=None` to `SLMFineTuner(...)` automatically instantiates `FineTuningConfig()` with built-in defaults.
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
+| `output_dir` | `~/.easyslm/finetuned` | Base directory for saved checkpoints and Model Cards (respects `EASYSLM_HOME`) |
 | `mode` | `"cls"` | Classification architecture: `"cls"` or `"json"` |
 | `pooling_strategy` | `"eos"` | Sequence pooling for `cls` mode: `"eos"`, `"mean"`, or `"max"` |
-| `prompts_config_path` | `"configs/prompts.yml"` | Path to prompt templates YAML file |
-| `output_dir` | `"./models/finetuned"` | Base directory for saved checkpoints and Model Cards |
-| `per_device_train_batch_size` | `1` | Training batch size per GPU |
-| `per_device_eval_batch_size` | `4` | Validation batch size per GPU |
-| `gradient_accumulation_steps` | `8` | Steps to accumulate gradients before optimizer update |
+| `prompts_config_path` | `"configs/prompts.yml"` | Path to prompt templates YAML (falls back to built-in `DEFAULT_PROMPTS_CONFIG`) |
+| `per_device_train_batch_size` | `1` | Training batch size per GPU (`>= 1`) |
+| `per_device_eval_batch_size` | `4` | Validation batch size per GPU (`>= 1`) |
+| `gradient_accumulation_steps` | `8` | Steps to accumulate gradients before optimizer update (`>= 1`) |
 | `gradient_checkpointing` | `true` | Recomputes activations during backward pass to save VRAM |
 | `use_lora` | `true` | Enables PEFT LoRA adapters (`false` for full fine-tuning) |
 | `lora_r` / `lora_alpha` / `lora_dropout` | `8` / `16` / `0.05` | LoRA rank, scaling factor, and dropout probability |
-| `lora_target_modules` | `"all-linear"` | Modules targeted by LoRA adapters |
-| `learning_rate` | `null` | Auto-selects `2e-4` when `use_lora: true`, or `2e-5` when `false` |
-| `lr_scheduler_type` / `warmup_ratio` | `"cosine"` / `0.1` | Learning rate schedule and warmup fraction |
-| `num_train_epochs` | `3.0` | Total number of training epochs |
+| `lora_target_modules` | `"all-linear"` | Modules targeted by LoRA adapters (`str` or `list[str]`) |
+| `learning_rate` | `null` | Auto-selects `2e-4` when `use_lora=True`, or `2e-5` when `False` |
+| `lr_scheduler_type` / `warmup_ratio` | `"cosine"` / `0.1` | Learning rate schedule and warmup fraction (`[0.0, 1.0]`) |
+| `weight_decay` / `max_grad_norm` | `0.01` / `1.0` | AdamW weight decay and gradient clipping threshold |
+| `num_train_epochs` | `3.0` | Total number of training epochs (`> 0.0`) |
 | `eval_strategy` / `eval_steps` | `"steps"` / `10` | Validation frequency (`"steps"`, `"epoch"`, or `"no"`) |
-| `val_split_ratio` | `0.15` | Validation split ratio when `--data` is a single `.txt` file |
+| `save_strategy` / `save_total_limit` | `"no"` / `2` | Intermediate Trainer checkpointing strategy and retention limit |
+| `logging_steps` | `5` | Steps between training progress logs |
+| `val_split_ratio` | `0.15` | Validation split ratio when `train_data_path` is a single `.txt` file (`[0.0, 1.0)`) |
 | `oversample_strategy` | `null` | Minority-class oversampling on train split: `"max"`, `"sqrt"`, or `null` |
 | `oversample_max_factor` | `null` | Optional maximum multiplication factor per class when oversampling |
 | `early_stopping_window` | `4` | Consecutive evaluations without improvement before stopping (`null` to disable) |
 | `early_stopping_metric` | `"eval_loss"` | Metric monitored by `EarlyStoppingWindowCallback` |
+| `seed` | `42` | Random seed for reproducibility |
 | `use_mlflow` | `true` | Enables automatic MLflow run, metric, plot, and table logging |
+| `mlflow_tracking_uri` | `null` | Optional override for `MLFLOW_TRACKING_URI` (defaults to `mlflow-config.yml` / `~/.easyslm/mlflow.db`) |
+| `mlflow_experiment_name` | `null` | Optional override for MLflow experiment name |
+| `mlflow_config_path` | `null` | Optional path to a custom MLflow YAML configuration file |
+| `run_name` | `null` | Optional custom run name for Trainer and MLflow |
 | `max_errors_per_class` | `5` | Maximum false-positive examples per class logged in `validation_errors.json` |
 
 ### 2. Prompt Templates (`configs/prompts.yml`)
-Customizes system prompts, user prompts, and full prompt formatting for both `cls` and `json` modes. Supported placeholders:
+Customizes system prompts, user prompts, and full prompt formatting for both `cls` and `json` modes. When no custom prompt YAML is provided, easySLM uses the built-in `DEFAULT_PROMPTS_CONFIG`. Supported placeholders:
 - `{classes}`: Alphabetically sorted, single-quoted class list (e.g., `'economy', 'sports'`).
 - `{mode_desc}`: Task description from `mode_descriptions` (`multi_label` vs. `single_label`).
 - `{example}`: Formatted example output for `json` mode.
 - `{text}`, `{system_prompt}`, `{user_prompt}`: Prompt composition placeholders.
 
 ### 3. MLflow Settings (`mlflow-config.yml`)
-Controls the local tracking server (`host`, `port`, `backend_store_uri`, `default_artifact_root`) and experiment tracking behavior (`experiment_prefix`, `system_metrics`, `system_metrics_sampling_interval`).
+Controls the local tracking server (`host`, `port`, `backend_store_uri`, `default_artifact_root`) and experiment tracking behavior (`experiment_prefix`, `system_metrics`, `system_metrics_sampling_interval`). Leaving `backend_store_uri` and `default_artifact_root` as `null` resolves them automatically under `~/.easyslm/` (`EASYSLM_HOME`).
 
 ---
 
@@ -331,28 +378,27 @@ During validation and post-training evaluation, easySLM computes and logs:
 
 In addition to scalar metrics, easySLM generates visual and tabular diagnostics in `<checkpoint>/plots/`, `<checkpoint>/tables/`, and MLflow:
 - **Confusion Matrix**: Standard confusion matrix (`confusion_matrix.png`) for single-label tasks, or Cross-Label co-occurrence matrix (`cross_label_confusion_matrix.png`) for multi-label tasks.
-- **Per-Class Metrics Heatmap**: Precision, Recall, F1, and Support per class (`per_class_metrics.png` & `.json`).
+- **Per-Class Metrics Heatmap & Table**: Precision, Recall, F1, and Support per class (`per_class_metrics.png` & `tables/per_class_metrics.json`).
 - **Label Cardinality Distribution**: True vs. predicted label count distribution per sample (`label_cardinality.png` & `.json`).
 - **Validation Errors Table**: Ranked table of misclassified validation samples with raw outputs and confidence scores (`validation_errors.json`).
 
 ---
 
-## Python API Usage
+## Python API & Notebooks
 
-All components are exposed under `src` for use in custom Python scripts or notebooks:
+Interactive examples are available in `notebooks/`:
+- [`notebooks/fine_tune.ipynb`](notebooks/fine_tune.ipynb): Minimal quickstart using built-in `FineTuningConfig` defaults.
+- [`notebooks/customize_fine_tuning.ipynb`](notebooks/customize_fine_tuning.ipynb): Full walkthrough exposing every configurable option in `ModelFactory`, `FineTuningConfig`, `SLMFineTuner`, and `SLMBase`.
 
 ```python
 from src import FineTuningConfig, SLMBase, SLMFineTuner
 
-# 1. Configure and run fine-tuning programmatically
-config = FineTuningConfig.from_yaml(
-    "configs/training_config.yml",
+# 1. Configure fine-tuning programmatically (uses built-in defaults for all omitted fields)
+#    Alternatively: FineTuningConfig.from_yaml("configs/training_config.yml", num_train_epochs=2.0)
+config = FineTuningConfig(
     mode="cls",
-    num_train_epochs=3.0,
-    per_device_train_batch_size=2,
-    gradient_accumulation_steps=4,
-    early_stopping_window=4,
-    early_stopping_metric="eval_loss",
+    num_train_epochs=2.0,
+    use_mlflow=False,
 )
 
 tuner = SLMFineTuner(model_name="Qwen/Qwen2.5-0.5B", config=config)
@@ -360,9 +406,8 @@ results = tuner.train(train_data_path="data/agnews_tiny")
 print("Saved checkpoint to:", results["checkpoint_dir"])
 print("Validation metrics:", results["eval_metrics"])
 
-# 2. Load the best discovered model (or use SLMBase.from_checkpoint(results["checkpoint_dir"]))
+# 2. Load the best checkpoint from ~/.easyslm/finetuned (or use SLMBase.from_checkpoint(...))
 model = SLMBase.from_best_model(
-    models_dir="./models/finetuned",
     model_type="cls",
     metric="eval_f1_macro",
 )
@@ -382,15 +427,22 @@ for item in predictions:
 
 ## Development & Code Quality
 
-This repository uses **Ruff** for linting and formatting and **MyPy** for static type checking:
+This repository uses **Pytest** for unit tests, **Ruff** for linting and formatting, and **MyPy** for static type checking:
 
 ```bash
+# Run unit test suite
+uv run pytest
+
 # Run linter and formatter checks
 uv run ruff check .
 uv run ruff format --check .
 
 # Run static type checking
 uv run mypy src
+
+# Preview documentation locally with live reload (opens http://127.0.0.1:8000 automatically)
+uv sync --group docs
+uv run easyslm docs start --port 8000
 ```
 
 ---

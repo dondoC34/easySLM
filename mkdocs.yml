@@ -1,0 +1,90 @@
+site_name: easySLM
+site_description: Lightweight framework for fine-tuning and running inference with Small Language Models (SLMs) on text classification tasks.
+site_url: https://dondoc34.github.io/easySLM/
+repo_url: https://github.com/dondoC34/easySLM
+repo_name: dondoC34/easySLM
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: deep purple
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.indexes
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+    - content.code.annotate
+
+plugins:
+  - search
+  - mkdocstrings:
+      default_handler: python
+      handlers:
+        python:
+          paths: [.]
+          options:
+            docstring_style: google
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+            show_symbol_type_heading: true
+            show_symbol_type_toc: true
+            members_order: source
+            separate_signature: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: index.md
+  - Getting Started:
+      - Installation & Storage: getting-started/installation.md
+      - Dataset Format: getting-started/dataset-format.md
+      - Configuration: getting-started/configuration.md
+  - Tutorials:
+      - Minimal Quickstart: tutorials/minimal-quickstart.md
+      - Customized Fine-Tuning: tutorials/custom-fine-tuning.md
+      - Inference & Model Cards: tutorials/inference-and-model-cards.md
+      - MLflow & Diagnostics: tutorials/mlflow-and-diagnostics.md
+  - CLI Reference: cli.md
+  - API Reference:
+      - SLM Models & Factory: api/slm.md
+      - Datasets & Collator: api/data.md
+      - Fine-Tuning: api/fine-tuning.md
+      - MLflow Tracking & Plots: api/tracking.md
+      - Utilities & Model Cards: api/utils.md
