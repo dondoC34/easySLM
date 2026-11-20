@@ -59,17 +59,8 @@ def get_default_mlflow_artifact_root() -> Path:
 
 
 def load_yaml(file_path: str | Path) -> dict[str, Any]:
-    """Loads a YAML file and returns its dictionary content.
-
-    Resolves absolute paths and paths relative to the current working directory first,
-    then falls back to resolving relative to the project root.
-    """
+    """Loads a YAML file and returns its dictionary content."""
     path = Path(file_path)
-    if not path.exists() and not path.is_absolute():
-        candidate = get_project_root() / path
-        if candidate.exists():
-            path = candidate
-
     if not path.exists():
         raise FileNotFoundError(f"YAML configuration file not found at: {path}")
 
@@ -89,7 +80,7 @@ DEFAULT_PROMPTS_CONFIG = {
             "Classify the user text into {mode_desc} from the following valid classes: [{classes}]."
         ),
         "user_prompt": "{text}",
-        "prompt_template": "{system_prompt}\n\nText: {user_prompt}",
+        "prompt_template": "{system_prompt}\n\nText: {user_prompt}\nLabel:",
     },
     "json": {
         "system_prompt": (

@@ -70,6 +70,8 @@ class TestUtilsConfig:
         (tmp_path / "custom.yml").write_text("foo: bar\n", encoding="utf-8")
         monkeypatch.chdir(tmp_path)
         assert load_yaml("custom.yml") == {"foo": "bar"}
+        with pytest.raises(FileNotFoundError):
+            load_yaml("configs/prompts.yml")
 
     def test_load_prompts_config_custom_and_fallback(self, tmp_path: Path) -> None:
         custom = tmp_path / "prompts.yml"
