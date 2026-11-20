@@ -121,6 +121,14 @@ class TestSLMCls:
         assert len(pred_multi["predictions"]) == 2
         assert all(len(p) >= 1 for p in pred_multi["predictions"])
 
+        # Exact threshold boundary: probability == threshold must be included (>=)
+        exact_prob = float(pred_multi["probabilities"][0, 0].item())
+        pred_boundary = model.predict(
+            input_ids[:1], attention_mask[:1], threshold=exact_prob, fallback_top1=False
+        )
+        assert pred_boundary["binary_vectors"][0, 0].item() == 1
+        assert model.idx_to_class[0] in pred_boundary["predictions"][0]
+
         # Single-label mode
         model_single = SLMCls(
             backbone=tiny_backbone,

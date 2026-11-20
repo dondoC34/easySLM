@@ -183,6 +183,17 @@ class TestEvaluation:
         y_pred_m = np.array([[1, 0, 0], [0, 1, 1]])
         m_multi = compute_classification_metrics(y_true_m, y_pred_m, multi_label=True)
         assert m_multi["exact_match_accuracy"] == pytest.approx(0.5)
+        assert "balanced_accuracy" not in m_multi
+
+        # When y_true is genuinely multi-label but y_pred happens to have <= 1 label per row,
+        # multiclass-only metrics must still be omitted.
+        y_pred_single_like = np.array([[1, 0, 0], [0, 1, 0]])
+        m_multi_single_pred = compute_classification_metrics(
+            y_true_m, y_pred_single_like, multi_label=True
+        )
+        assert "balanced_accuracy" not in m_multi_single_pred
+        assert "matthews_corrcoef" not in m_multi_single_pred
+        assert "cohen_kappa" not in m_multi_single_pred
 
     def test_cls_extract_and_compute_metrics(self) -> None:
         logits = np.array([[3.0, -3.0], [-3.0, 3.0]])
