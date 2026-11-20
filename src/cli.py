@@ -1,15 +1,23 @@
 import argparse
+import importlib.util
 import logging
+import subprocess
 import sys
+from pathlib import Path
 from typing import Any
 
 from src.fine_tuning import FineTuningConfig, SLMFineTuner
 from src.slm import SLMBase
 from src.tracking.cli import handle_mlflow_cli
-from src.utils.config import get_default_finetuned_dir, get_default_predictions_dir
+from src.utils.config import (
+    get_default_finetuned_dir,
+    get_default_predictions_dir,
+    get_project_root,
+)
 from src.utils.device import print_cuda_info
 from src.utils.help_tables import (
     get_combined_help_tables,
+    get_docs_help_table,
     get_ftune_help_table,
     get_mlflow_help_table,
     get_predict_help_table,
@@ -143,6 +151,38 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # --------------------------------------------------------------------------
+    # Subcommand: docs
+    # --------------------------------------------------------------------------
+    docs_parser = subparsers.add_parser(
+        "docs",
+        help="Serve local MkDocs documentation and open in browser",
+    )
+    docs_subparsers = docs_parser.add_subparsers(dest="docs_subcommand")
+    docs_start_parser = docs_subparsers.add_parser(
+        "start",
+        aliases=["serve"],
+        help="Start local MkDocs development server and open the browser",
+    )
+    docs_start_parser.add_argument(
+        "--host",
+        type=str,
+        default="127.0.0.1",
+        help="Host IP address to bind the docs server to (default: 127.0.0.1)",
+    )
+    docs_start_parser.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port number to serve documentation on (default: 8000)",
+    )
+    docs_start_parser.add_argument(
+        "--no-open",
+        action="store_true",
+        default=False,
+        help="Do not automatically open the documentation URL in a web browser",
+    )
+
+    # --------------------------------------------------------------------------
     # Subcommand: info
     # --------------------------------------------------------------------------
     subparsers.add_parser("info", help="Print GPU / CUDA diagnostic information")
@@ -214,6 +254,61 @@ def run_predict(args: argparse.Namespace) -> None:
         logger.info("  - %s", f)
 
 
+def start_docs_server(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    open_browser: bool = True,
+) -> int:
+    """Starts the local MkDocs development server and optionally opens the browser."""
+    if importlib.util.find_spec("mkdocs") is None:
+        logger.error(
+            "MkDocs is not installed. Install docs dependencies with: uv sync --group docs"
+        )
+        return 1
+
+    config_file = Path("mkdocs.yml")
+    if not config_file.is_file():
+        config_file = get_project_root() / "mkdocs.yml"
+    if not config_file.is_file():
+        logger.error("Could not locate 'mkdocs.yml' in current directory or repository root.")
+        return 1
+
+    dev_addr = f"{host}:{port}"
+    cmd = [
+        sys.executable,
+        "-m",
+        "mkdocs",
+        "serve",
+        "-a",
+        dev_addr,
+        "-f",
+        str(config_file),
+    ]
+    if open_browser:
+        cmd.append("--open")
+
+    url = f"http://{dev_addr}"
+    logger.info("Starting easySLM documentation server at %s ...", url)
+    print(f"\n[easySLM] Documentation running at: {url}")
+    print("[easySLM] Press Ctrl+C to terminate the server.\n")
+    try:
+        return subprocess.call(cmd)
+    except KeyboardInterrupt:
+        logger.info("Documentation server stopped by user.")
+        return 0
+
+
+def run_docs(args: argparse.Namespace) -> int:
+    if getattr(args, "docs_subcommand", None) in ("start", "serve"):
+        return start_docs_server(
+            host=args.host,
+            port=args.port,
+            open_browser=not args.no_open,
+        )
+    print(get_docs_help_table())
+    return 0
+
+
 def main() -> None:
     args_list = sys.argv[1:]
 
@@ -236,6 +331,9 @@ def main() -> None:
         elif "mlflow" in args_list:
             print(get_mlflow_help_table())
             sys.exit(0)
+        elif "docs" in args_list:
+            print(get_docs_help_table())
+            sys.exit(0)
         else:
             print(get_combined_help_tables())
             sys.exit(0)
@@ -254,6 +352,8 @@ def main() -> None:
         run_predict(args)
     elif args.subcommand == "mlflow":
         print(get_mlflow_help_table())
+    elif args.subcommand == "docs":
+        sys.exit(run_docs(args))
     elif args.subcommand == "info":
         logger.info("=== easySLM System Information ===")
         print_cuda_info()

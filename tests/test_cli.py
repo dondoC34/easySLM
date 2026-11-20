@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 import src
-from src.cli import build_parser, main, run_ftune, run_predict
+from src.cli import build_parser, main, run_docs, run_ftune, run_predict, start_docs_server
 
 
 class TestMainCLI:
@@ -99,3 +99,29 @@ class TestMainCLI:
         with patch("src.cli.SLMBase.from_best_model", return_value=mock_model) as mock_best:
             run_predict(args_best)
         mock_best.assert_called_once()
+
+    def test_docs_start_and_missing_mkdocs(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["docs", "start", "--port", "8080"])
+        with (
+            patch("importlib.util.find_spec", return_value=object()),
+            patch("subprocess.call", return_value=0) as mock_call,
+        ):
+            assert run_docs(args) == 0
+        cmd = mock_call.call_args[0][0]
+        assert "mkdocs" in cmd
+        assert "127.0.0.1:8080" in cmd
+        assert "--open" in cmd
+
+        args_no_open = parser.parse_args(["docs", "start", "--port", "9000", "--no-open"])
+        with (
+            patch("importlib.util.find_spec", return_value=object()),
+            patch("subprocess.call", return_value=0) as mock_call2,
+        ):
+            assert run_docs(args_no_open) == 0
+        cmd2 = mock_call2.call_args[0][0]
+        assert "127.0.0.1:9000" in cmd2
+        assert "--open" not in cmd2
+
+        with patch("importlib.util.find_spec", return_value=None):
+            assert start_docs_server(port=8000) == 1
