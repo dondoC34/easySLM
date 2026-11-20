@@ -14,6 +14,7 @@ from transformers import PreTrainedModel, PreTrainedTokenizerBase
 from src.data.base_dataset import SLMDatasetBase, get_backbone_max_length
 from src.data.cls_dataset import SLMClsDataset
 from src.data.json_dataset import SLMJsonDataset
+from src.utils.config import get_default_finetuned_dir
 from src.utils.model_card import find_best_model
 
 if TYPE_CHECKING:
@@ -111,18 +112,21 @@ class SLMBase(nn.Module, ABC):
     @classmethod
     def from_best_model(
         cls,
-        models_dir: str | Path = "./models/finetuned",
+        models_dir: str | Path | None = None,
         model_type: str = "cls",
         metric: str = "eval_f1_macro",
         prompts_config_path: str | Path | None = None,
         factory: ModelFactory | None = None,
     ) -> SLMBase:
         """
-        Discovers the best model in `models_dir` using its model cards and returns the loaded
-        `SLMBase` instance (`SLMCls` or `SLMJson`), storing `"checkpoint_dir"` and `"model_card"`
-        inside `model.metadata`.
+        Discovers the best model in `models_dir` (defaults to ``<EASYSLM_HOME>/finetuned``) using its
+        model cards and returns the loaded `SLMBase` instance (`SLMCls` or `SLMJson`), storing
+        `"checkpoint_dir"` and `"model_card"` inside `model.metadata`.
         """
-        best_dir, best_card = find_best_model(models_dir, model_type=model_type, metric=metric)
+        resolved_models_dir = models_dir if models_dir is not None else get_default_finetuned_dir()
+        best_dir, best_card = find_best_model(
+            resolved_models_dir, model_type=model_type, metric=metric
+        )
         model = cls.from_checkpoint(
             checkpoint_dir=best_dir,
             prompts_config_path=prompts_config_path,

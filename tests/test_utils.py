@@ -11,6 +11,14 @@ import torch
 
 from src.utils.config import (
     DEFAULT_PROMPTS_CONFIG,
+    EASYSLM_HOME_ENV_VAR,
+    get_default_finetuned_dir,
+    get_default_mlflow_artifact_root,
+    get_default_mlflow_db_path,
+    get_default_mlflow_tracking_uri,
+    get_default_models_cache_dir,
+    get_default_predictions_dir,
+    get_easyslm_home,
     get_project_root,
     load_prompts_config,
     load_yaml,
@@ -56,6 +64,13 @@ class TestUtilsConfig:
         assert isinstance(data, dict)
         assert "cls" in data or "json" in data
 
+    def test_load_yaml_relative_to_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (tmp_path / "custom.yml").write_text("foo: bar\n", encoding="utf-8")
+        monkeypatch.chdir(tmp_path)
+        assert load_yaml("custom.yml") == {"foo": "bar"}
+
     def test_load_prompts_config_custom_and_fallback(self, tmp_path: Path) -> None:
         custom = tmp_path / "prompts.yml"
         custom.write_text("cls:\n  user_prompt: '{text}'\n", encoding="utf-8")
@@ -64,6 +79,69 @@ class TestUtilsConfig:
 
         fallback = load_prompts_config(tmp_path / "missing_prompts.yml")
         assert fallback == DEFAULT_PROMPTS_CONFIG
+
+    def test_easyslm_home_default_and_env_override(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv(EASYSLM_HOME_ENV_VAR, raising=False)
+        assert get_easyslm_home() == (Path.home() / ".easyslm").resolve()
+
+        custom_home = tmp_path / "custom_easyslm_home"
+        monkeypatch.setenv(EASYSLM_HOME_ENV_VAR, str(custom_home))
+        resolved = custom_home.resolve()
+        assert get_easyslm_home() == resolved
+        assert get_default_models_cache_dir() == resolved / "models"
+        assert get_default_finetuned_dir() == resolved / "finetuned"
+        assert get_default_predictions_dir() == resolved / "predictions"
+        assert get_default_mlflow_db_path() == resolved / "mlflow.db"
+        assert get_default_mlflow_artifact_root() == resolved / "mlruns"
+        assert (
+            get_default_mlflow_tracking_uri() == f"sqlite:///{(resolved / 'mlflow.db').as_posix()}"
+        )
+
+    def test_easyslm_home_overridable_by_explicit_params(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from src.fine_tuning.config import FineTuningConfig
+        from src.slm.slm_factory import ModelFactory
+        from src.tracking.config import get_mlflow_config
+
+        custom_home = tmp_path / "home_dir"
+        monkeypatch.setenv(EASYSLM_HOME_ENV_VAR, str(custom_home))
+
+        factory_default = ModelFactory()
+        assert factory_default.cache_dir == (custom_home / "models").resolve()
+
+        explicit_cache = tmp_path / "explicit_models"
+        factory_override = ModelFactory(cache_dir=explicit_cache)
+        assert factory_override.cache_dir == explicit_cache
+
+        ft_default = FineTuningConfig.from_yaml("configs/training_config.yml")
+        assert Path(ft_default.output_dir) == (custom_home / "finetuned").resolve()
+
+        explicit_out = tmp_path / "explicit_finetuned"
+        ft_override = FineTuningConfig.from_yaml(
+            "configs/training_config.yml", output_dir=str(explicit_out)
+        )
+        assert Path(ft_override.output_dir) == explicit_out
+
+        mlflow_default = get_mlflow_config()
+        assert mlflow_default["server"]["backend_store_uri"] == (
+            f"sqlite:///{(custom_home / 'mlflow.db').resolve().as_posix()}"
+        )
+        assert (
+            Path(mlflow_default["server"]["default_artifact_root"])
+            == (custom_home / "mlruns").resolve()
+        )
+
+        custom_mlflow_yml = tmp_path / "custom-mlflow.yml"
+        custom_mlflow_yml.write_text(
+            "server:\n  backend_store_uri: sqlite:///custom.db\n  default_artifact_root: /tmp/custom_runs\n",
+            encoding="utf-8",
+        )
+        mlflow_override = get_mlflow_config(custom_mlflow_yml)
+        assert mlflow_override["server"]["backend_store_uri"] == "sqlite:///custom.db"
+        assert mlflow_override["server"]["default_artifact_root"] == "/tmp/custom_runs"
 
 
 class TestUtilsDevice:

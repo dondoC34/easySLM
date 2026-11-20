@@ -13,6 +13,7 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 
+from src.utils.config import get_default_models_cache_dir
 from src.utils.device import get_default_device, get_default_dtype
 
 logger = logging.getLogger(__name__)
@@ -29,17 +30,19 @@ class ModelFactory:
 
     def __init__(
         self,
-        cache_dir: str | Path = "./models",
+        cache_dir: str | Path | None = None,
         device: str | torch.device | None = None,
         torch_dtype: torch.dtype | None = None,
     ):
         """
         Args:
-            cache_dir: Directory where models are stored locally.
+            cache_dir: Directory where models are stored locally. Defaults to ``<EASYSLM_HOME>/models`` (``~/.easyslm/models``).
             device: Target device ('cuda', 'cpu', or torch.device). Defaults to 'cuda' if available.
             torch_dtype: Model weights dtype (e.g., torch.float16, torch.bfloat16). Defaults to optimal GPU dtype.
         """
-        self.cache_dir = Path(cache_dir)
+        self.cache_dir = (
+            Path(cache_dir) if cache_dir is not None else get_default_models_cache_dir()
+        )
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         if device is None:

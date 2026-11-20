@@ -1,8 +1,10 @@
 server:
   host: "127.0.0.1"
   port: 5000
-  backend_store_uri: "sqlite:///mlflow.db"
-  default_artifact_root: "./mlruns"
+  # If null, defaults to sqlite:///<EASYSLM_HOME>/mlflow.db (~/.easyslm/mlflow.db)
+  backend_store_uri: null
+  # If null, defaults to <EASYSLM_HOME>/mlruns (~/.easyslm/mlruns)
+  default_artifact_root: null
 
 tracking:
   experiment_prefix: "easySLM"
