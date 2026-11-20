@@ -2,68 +2,71 @@
 
 import logging
 import math
-from dataclasses import dataclass, fields
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import torch
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic.fields import FieldInfo
 from transformers import TrainingArguments
 
 from src.slm import PoolingStrategy
-from src.utils.config import load_yaml
+from src.utils.config import get_default_finetuned_dir, load_yaml
 from src.utils.device import is_native_bf16_supported
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class FineTuningConfig:
+class FineTuningConfig(BaseModel):
     """
-    Configuration for fine-tuning Small Language Models with Hugging Face `Trainer`.
+    Pydantic configuration model for fine-tuning Small Language Models with Hugging Face `Trainer`.
 
+    Serves as the single source of truth for all parameter defaults and validation.
     Defaults follow best practices for 8 GB GPU VRAM (LoRA, Gradient Checkpointing,
     Mixed Precision bf16/fp16, Gradient Accumulation, Cosine LR Schedule with Warmup,
     Gradient Clipping, and MLflow tracking).
     """
 
-    output_dir: str = "./models/finetuned"
+    model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    output_dir: str = Field(default_factory=lambda: str(get_default_finetuned_dir()))
     mode: Literal["json", "cls"] = "cls"
     pooling_strategy: PoolingStrategy = "eos"
 
     # Batching & VRAM optimization (tuned for 8 GB VRAM)
-    per_device_train_batch_size: int = 1
-    per_device_eval_batch_size: int = 4
-    gradient_accumulation_steps: int = 8
+    per_device_train_batch_size: int = Field(default=1, ge=1)
+    per_device_eval_batch_size: int = Field(default=4, ge=1)
+    gradient_accumulation_steps: int = Field(default=8, ge=1)
     gradient_checkpointing: bool = True
 
     # LoRA / PEFT parameters
     use_lora: bool = True
-    lora_r: int = 8
-    lora_alpha: int = 16
-    lora_dropout: float = 0.05
+    lora_r: int = Field(default=8, ge=1)
+    lora_alpha: int = Field(default=16, ge=1)
+    lora_dropout: float = Field(default=0.05, ge=0.0, le=1.0)
     lora_target_modules: str | list[str] = "all-linear"
 
     # Adaptive Learning Rate & Optimization best practices
-    learning_rate: float | None = None  # Auto-selected: 2e-4 for LoRA, 2e-5 for full FT
+    learning_rate: float | None = Field(default=None, gt=0.0)
     lr_scheduler_type: str = "cosine"
-    warmup_ratio: float = 0.1
-    weight_decay: float = 0.01
-    max_grad_norm: float = 1.0
-    num_train_epochs: float = 3.0
+    warmup_ratio: float = Field(default=0.1, ge=0.0, le=1.0)
+    weight_decay: float = Field(default=0.01, ge=0.0)
+    max_grad_norm: float = Field(default=1.0, gt=0.0)
+    num_train_epochs: float = Field(default=3.0, gt=0.0)
 
     # Prompt configuration
     prompts_config_path: str = "configs/prompts.yml"
 
     # Evaluation & Checkpointing
     eval_strategy: str = "steps"
-    eval_steps: int = 10
+    eval_steps: int = Field(default=10, ge=1)
     save_strategy: str = "no"
-    save_total_limit: int = 2
-    logging_steps: int = 5
-    val_split_ratio: float = 0.15
+    save_total_limit: int = Field(default=2, ge=1)
+    logging_steps: int = Field(default=5, ge=1)
+    val_split_ratio: float = Field(default=0.15, ge=0.0, lt=1.0)
     oversample_strategy: str | None = None
-    oversample_max_factor: float | None = None
-    early_stopping_window: int | None = 4
+    oversample_max_factor: float | None = Field(default=None, gt=0.0)
+    early_stopping_window: int | None = Field(default=4, ge=1)
     early_stopping_metric: str = "eval_loss"
     seed: int = 42
 
@@ -73,13 +76,49 @@ class FineTuningConfig:
     mlflow_experiment_name: str | None = None
     mlflow_config_path: str | None = None
     run_name: str | None = None
-    max_errors_per_class: int = 5
+    max_errors_per_class: int = Field(default=5, ge=0)
+
+    @staticmethod
+    def _format_field_default(field_info: FieldInfo) -> Any:
+        if field_info.default_factory is not None:
+            return field_info.default_factory()  # type: ignore[call-arg]
+        return field_info.default
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_unknown_keys(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            unknown = sorted(set(data.keys()) - set(cls.model_fields.keys()))
+            if unknown:
+                accepted = ", ".join(
+                    f"{name}={cls._format_field_default(info)!r}"
+                    for name, info in cls.model_fields.items()
+                )
+                raise ValueError(
+                    f"Unrecognized configuration key(s): {', '.join(unknown)}. "
+                    f"Accepted keys and their defaults: {accepted}"
+                )
+        return data
+
+    @field_validator("output_dir", mode="before")
+    @classmethod
+    def _default_output_dir_if_none(cls, value: Any) -> Any:
+        if value is None or value == "":
+            return str(get_default_finetuned_dir())
+        return value
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any] | None = None, **overrides: Any) -> "FineTuningConfig":
+        """Instantiates `FineTuningConfig` from a partial or empty dictionary with optional overrides."""
+        merged: dict[str, Any] = dict(data) if data is not None else {}
+        merged.update(overrides)
+        return cls.model_validate(merged)
 
     @classmethod
     def from_yaml(
         cls,
         yaml_path: str | Path = "configs/training_config.yml",
-        **overrides,
+        **overrides: Any,
     ) -> "FineTuningConfig":
         """
         Loads configuration from a YAML file, with optional keyword overrides.
@@ -89,11 +128,7 @@ class FineTuningConfig:
             **overrides: Optional parameter overrides to take precedence over the YAML values.
         """
         raw_dict = load_yaml(yaml_path)
-        raw_dict.update(overrides)
-
-        valid_fields = {f.name for f in fields(cls)}
-        filtered = {k: v for k, v in raw_dict.items() if k in valid_fields}
-        return cls(**filtered)
+        return cls.from_dict(raw_dict, **overrides)
 
     def to_training_arguments(
         self,

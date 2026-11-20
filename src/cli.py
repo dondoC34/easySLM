@@ -6,6 +6,7 @@ from typing import Any
 from src.fine_tuning import FineTuningConfig, SLMFineTuner
 from src.slm import SLMBase
 from src.tracking.cli import handle_mlflow_cli
+from src.utils.config import get_default_finetuned_dir, get_default_predictions_dir
 from src.utils.device import print_cuda_info
 from src.utils.help_tables import (
     get_combined_help_tables,
@@ -45,7 +46,7 @@ def build_parser() -> argparse.ArgumentParser:
     ftune_parser.add_argument(
         "--data",
         type=str,
-        default="data/sample_news.txt",
+        default="data/agnews_tiny",
         help="Path to training dataset (.txt file or folder containing train.txt and optional val.txt)",
     )
     ftune_parser.add_argument(
@@ -59,8 +60,8 @@ def build_parser() -> argparse.ArgumentParser:
     ftune_parser.add_argument(
         "--config",
         type=str,
-        default="configs/training_config.yml",
-        help="Path to training configuration YAML file",
+        default=None,
+        help="Optional path to training configuration YAML file (defaults to FineTuningConfig built-in defaults)",
     )
     ftune_parser.add_argument(
         "--prompts-config",
@@ -91,8 +92,8 @@ def build_parser() -> argparse.ArgumentParser:
     pred_parser.add_argument(
         "--models-dir",
         type=str,
-        default="./models/finetuned",
-        help="Directory to search for model cards when --model is not specified",
+        default=None,
+        help="Directory to search for model cards when --model is not specified (defaults to ~/.easyslm/finetuned)",
     )
     pred_parser.add_argument(
         "--type",
@@ -105,14 +106,14 @@ def build_parser() -> argparse.ArgumentParser:
     pred_parser.add_argument(
         "--data",
         type=str,
-        default="data/sample_news_validation.txt",
+        default="data/agnews_tiny/val.txt",
         help="Path to .txt file or folder containing .txt files to predict on",
     )
     pred_parser.add_argument(
         "--output-dir",
         type=str,
-        default="predictions",
-        help="Directory where predictions will be saved (.txt and .json)",
+        default=None,
+        help="Directory where predictions will be saved (.txt and .json, defaults to ~/.easyslm/predictions)",
     )
     pred_parser.add_argument(
         "--metric",
@@ -158,10 +159,14 @@ def run_ftune(args: argparse.Namespace) -> None:
     if args.epochs is not None:
         overrides["num_train_epochs"] = args.epochs
 
-    logger.info(
-        "Initializing fine-tuning with config '%s' and model '%s'...", args.config, args.model
-    )
-    config = FineTuningConfig.from_yaml(args.config, **overrides)
+    if args.config is not None:
+        logger.info(
+            "Initializing fine-tuning with config '%s' and model '%s'...", args.config, args.model
+        )
+        config = FineTuningConfig.from_yaml(args.config, **overrides)
+    else:
+        logger.info("Initializing fine-tuning with built-in defaults and model '%s'...", args.model)
+        config = FineTuningConfig(**overrides)
     tuner = SLMFineTuner(model_name=args.model, config=config)
     results = tuner.train(train_data_path=args.data)
     logger.info(
@@ -177,14 +182,15 @@ def run_predict(args: argparse.Namespace) -> None:
             prompts_config_path=args.prompts_config,
         )
     else:
+        resolved_models_dir = args.models_dir or str(get_default_finetuned_dir())
         logger.info(
             "No --model specified. Searching for best '%s' model in '%s' (ranking by '%s')...",
             args.mode,
-            args.models_dir,
+            resolved_models_dir,
             args.metric,
         )
         model = SLMBase.from_best_model(
-            models_dir=args.models_dir,
+            models_dir=resolved_models_dir,
             model_type=args.mode,
             metric=args.metric,
             prompts_config_path=args.prompts_config,
@@ -196,10 +202,11 @@ def run_predict(args: argparse.Namespace) -> None:
             best_card.get("as_of", "N/A"),
         )
 
+    resolved_output_dir = args.output_dir or str(get_default_predictions_dir())
     logger.info("Predicting on data: '%s'...", args.data)
     output_files = model.predict_file_or_dir(
         data_path=args.data,
-        output_dir=args.output_dir,
+        output_dir=resolved_output_dir,
         batch_size=args.batch_size,
     )
     logger.info("Predictions successfully written to:")

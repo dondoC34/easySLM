@@ -226,7 +226,8 @@ __marimo__/
 /examples/
 /main.py
 data/*
-!data/sample_news*.txt
+!data/agnews_tiny/
+!data/agnews_tiny/*.txt
 /outputs/
 /checkpoints/
 /mlruns/

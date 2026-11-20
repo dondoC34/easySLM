@@ -9,6 +9,7 @@ from unittest.mock import MagicMock, patch
 import numpy as np
 import pytest
 import torch
+from pydantic import ValidationError
 from torch.utils.data import Subset
 from transformers import EvalPrediction, TrainerControl, TrainerState
 
@@ -35,10 +36,44 @@ from tests.conftest import FakeTokenizer, TinyBackbone, TinyCausalLM
 class TestFineTuningConfig:
     def test_from_yaml_and_overrides(self, tmp_path: Path) -> None:
         yml = tmp_path / "cfg.yml"
-        yml.write_text("mode: json\nnum_train_epochs: 5\nunknown_key: 123\n", encoding="utf-8")
+        yml.write_text("mode: json\nnum_train_epochs: 5\n", encoding="utf-8")
         cfg = FineTuningConfig.from_yaml(yml, num_train_epochs=2)
         assert cfg.mode == "json"
         assert cfg.num_train_epochs == 2
+        assert cfg.early_stopping_window == 4  # built-in default
+
+    def test_from_dict_and_kwargs_partial_override(self) -> None:
+        empty_cfg = FineTuningConfig.from_dict({})
+        default_cfg = FineTuningConfig()
+        assert empty_cfg == default_cfg
+
+        partial = FineTuningConfig.from_dict({"mode": "json"}, learning_rate=1e-4)
+        assert partial.mode == "json"
+        assert partial.learning_rate == pytest.approx(1e-4)
+        assert partial.lora_r == default_cfg.lora_r
+
+    def test_unknown_key_forbid_custom_message(self, tmp_path: Path) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            FineTuningConfig(unknown_key=123)  # type: ignore[call-arg]
+        msg = str(exc_info.value)
+        assert "Unrecognized configuration key(s): unknown_key" in msg
+        assert "Accepted keys and their defaults:" in msg
+        assert "mode='cls'" in msg
+        assert "num_train_epochs=3.0" in msg
+
+        yml = tmp_path / "bad.yml"
+        yml.write_text("mode: cls\nbad_param: true\n", encoding="utf-8")
+        with pytest.raises(ValidationError) as yaml_exc:
+            FineTuningConfig.from_yaml(yml)
+        assert "bad_param" in str(yaml_exc.value)
+
+    def test_invalid_range_raises_validation_error(self) -> None:
+        with pytest.raises(ValidationError):
+            FineTuningConfig(val_split_ratio=1.5)
+
+    def test_trainer_config_none_uses_pydantic_defaults(self) -> None:
+        tuner = SLMFineTuner(model_name="Qwen/Qwen2.5-0.5B", config=None)
+        assert tuner.config == FineTuningConfig()
 
     def test_to_training_arguments_cpu(self, tmp_path: Path) -> None:
         cfg = FineTuningConfig(
@@ -358,7 +393,10 @@ class TestSLMFineTuner:
         model = tuner.build_model(["a", "b"])
         assert isinstance(model, SLMJson)
 
-        tuner.config.mode = "invalid"  # type: ignore[assignment]
+        with pytest.raises(ValidationError):
+            tuner.config.mode = "invalid"  # type: ignore[assignment]
+
+        tuner.config = SimpleNamespace(mode="invalid")  # type: ignore[assignment]
         with pytest.raises(ValueError, match="Unsupported mode"):
             tuner.build_model(["a"])
 

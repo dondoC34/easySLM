@@ -29,7 +29,8 @@ prompts_config_path: "configs/prompts.yml"
 # Output & Directories
 # ------------------------------------------------------------------------------
 # Directory where fine-tuned model checkpoints and model cards will be stored.
-output_dir: "./models/finetuned"
+# If null, defaults to ~/.easyslm/finetuned (overridable via EASYSLM_HOME).
+output_dir: null
 
 # ------------------------------------------------------------------------------
 # Memory & Batching Optimization (Tuned for 8 GB GPU VRAM)
@@ -123,7 +124,7 @@ oversample_strategy: null
 oversample_max_factor: null
 
 # Early stopping: stop if early_stopping_metric does not improve for early_stopping_window consecutive evaluations (null to disable).
-early_stopping_window: 4
+early_stopping_window: 10
 early_stopping_metric: "eval_loss"
 
 # Random seed for dataset shuffling and reproducibility.
@@ -133,7 +134,8 @@ seed: 42
 # MLflow Experiment Tracking
 # ------------------------------------------------------------------------------
 use_mlflow: true
-mlflow_tracking_uri: "sqlite:///mlflow.db"
+# If null, uses backend_store_uri from mlflow-config.yml (defaults to ~/.easyslm/mlflow.db).
+mlflow_tracking_uri: null
 mlflow_experiment_name: "easySLM_finetuning"
 run_name: null
 max_errors_per_class: 5

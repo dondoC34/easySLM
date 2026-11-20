@@ -8,7 +8,7 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
     ),
     (
         "--data",
-        "path (default: 'data/sample_news.txt')",
+        "path (default: 'data/agnews_tiny')",
         "Path to dataset .txt file or folder (auto-discovers train.txt and optional val.txt; splits if no val.txt).",
     ),
     (
@@ -18,8 +18,8 @@ FTUNE_OPTIONS: list[tuple[str, str, str]] = [
     ),
     (
         "--config",
-        "path (default: 'configs/training_config.yml')",
-        "Path to YAML training configuration file (controls batch sizes, LoRA, LR, early stopping, MLflow, etc.).",
+        "path (default: built-in)",
+        "Optional path to YAML training configuration file (overrides built-in FineTuningConfig defaults).",
     ),
     (
         "--prompts-config",
@@ -41,8 +41,8 @@ PREDICT_OPTIONS: list[tuple[str, str, str]] = [
     ),
     (
         "--models-dir",
-        "path (default: './models/finetuned')",
-        "Directory searched for model cards when --model is omitted.",
+        "path (default: '~/.easyslm/finetuned')",
+        "Directory searched for model cards when --model is omitted (respects EASYSLM_HOME).",
     ),
     (
         "--type",
@@ -51,13 +51,13 @@ PREDICT_OPTIONS: list[tuple[str, str, str]] = [
     ),
     (
         "--data",
-        "path (default: 'data/sample_news_validation.txt')",
+        "path (default: 'data/agnews_tiny/val.txt')",
         "Path to .txt file or directory containing .txt lines to predict on.",
     ),
     (
         "--output-dir",
-        "path (default: 'predictions')",
-        "Directory where prediction results (.txt and .json) are saved.",
+        "path (default: '~/.easyslm/predictions')",
+        "Directory where prediction results (.txt and .json) are saved (respects EASYSLM_HOME).",
     ),
     (
         "--metric",

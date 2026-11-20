@@ -21,6 +21,7 @@ from urllib.request import url2pathname
 
 from src.tracking.config import get_mlflow_config
 from src.tracking.server import check_mlflow_server_online
+from src.utils.config import get_default_mlflow_artifact_root, get_default_mlflow_tracking_uri
 
 logger = logging.getLogger("easySLM.tracking.manager")
 
@@ -36,8 +37,10 @@ def resolve_storage_paths(config_path: str | Path | None = None) -> tuple[Path |
     """
     cfg = get_mlflow_config(config_path)
     server_cfg = cfg.get("server", {})
-    backend_uri = server_cfg.get("backend_store_uri", "sqlite:///mlflow.db")
-    artifact_root = server_cfg.get("default_artifact_root", "./mlruns")
+    backend_uri = server_cfg.get("backend_store_uri") or get_default_mlflow_tracking_uri()
+    artifact_root = server_cfg.get("default_artifact_root") or str(
+        get_default_mlflow_artifact_root()
+    )
 
     db_path: Path | None = None
     if backend_uri.startswith("sqlite:///"):

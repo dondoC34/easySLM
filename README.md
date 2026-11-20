@@ -41,8 +41,9 @@ easySLM/
 ├── configs/
 │   ├── prompts.yml                # System, user, and full prompt templates for CLS and JSON modes
 │   └── training_config.yml        # Hyperparameters, LoRA, early stopping, oversampling, and Trainer settings
-├── data/                          # Sample single-label and multi-label datasets (.txt)
-├── examples/                      # Quickstart and programmatic usage scripts
+├── data/
+│   └── agnews_tiny/               # Balanced toy AG News dataset (train.txt: 200, val.txt: 40)
+├── notebooks/                     # Minimal interactive fine-tuning & prediction notebooks
 ├── models/
 │   └── finetuned/                 # Saved checkpoints, Model Cards, plots, and evaluation tables
 ├── predictions/                   # Batch inference outputs (.txt and .json)
@@ -144,7 +145,7 @@ Fine-tune any compatible Hugging Face SLM using `configs/training_config.yml` an
 | Option | Default | Description |
 | :--- | :--- | :--- |
 | `--model` | `Qwen/Qwen2.5-0.5B` | Hugging Face model ID or local path |
-| `--data` | `data/sample_news.txt` | Path to a `.txt` dataset file or a directory containing `train.txt` (and optional `val.txt`) |
+| `--data` | `data/agnews_tiny` | Path to a `.txt` dataset file or a directory containing `train.txt` (and optional `val.txt`) |
 | `--type` | *(from config)* | Optional classification mode override: `cls` (linear head) or `json` (generative list) |
 | `--config` | `configs/training_config.yml` | Path to the training configuration YAML file |
 | `--prompts-config` | *(from config)* | Optional override path to the prompt templates YAML file |
@@ -152,25 +153,25 @@ Fine-tune any compatible Hugging Face SLM using `configs/training_config.yml` an
 
 #### Examples
 ```bash
-# 1. Direct Classification (CLS mode) on a single file (auto train/val split)
+# 1. Direct Classification (CLS mode) on the built-in agnews_tiny toy dataset
 uv run easyslm ftune \
   --model Qwen/Qwen2.5-0.5B \
   --type cls \
-  --data data/sample_news.txt \
+  --data data/agnews_tiny \
   --epochs 3
 
 # 2. Generative Classification (JSON mode)
 uv run easyslm ftune \
   --model Qwen/Qwen2.5-0.5B \
   --type json \
-  --data data/sample_news.txt \
+  --data data/agnews_tiny \
   --epochs 3
 
-# 3. Fine-tuning on a directory with train.txt / val.txt and a custom prompt config
+# 3. Fine-tuning with a custom config and prompt template
 uv run easyslm ftune \
   --model HuggingFaceTB/SmolLM2-1.7B \
   --type cls \
-  --data data/movie_plots \
+  --data data/agnews_tiny \
   --config configs/training_config.yml \
   --prompts-config configs/prompts.yml
 ```
@@ -198,7 +199,7 @@ Run batch predictions on a single `.txt` file or an entire directory of `.txt` f
 | `--model` | *(auto-best)* | Path to a specific checkpoint directory. If omitted, selects the best model from `--models-dir` |
 | `--models-dir` | `./models/finetuned` | Directory searched for `model_card_*.md` files when `--model` is omitted |
 | `--type` | `cls` | Model architecture mode to search for (`cls` or `json`) |
-| `--data` | `data/sample_news_validation.txt` | Path to `.txt` file or directory of `.txt` files to classify |
+| `--data` | `data/agnews_tiny/val.txt` | Path to `.txt` file or directory of `.txt` files to classify |
 | `--output-dir` | `predictions` | Output directory where `.txt` and `.json` predictions are written |
 | `--metric` | `eval_f1_macro` | Metric used to rank Model Cards when `--model` is omitted (e.g., `eval_f1_macro`, `eval_accuracy`, `eval_loss`) |
 | `--batch-size` | `8` | Inference batch size |
@@ -209,20 +210,20 @@ Run batch predictions on a single `.txt` file or an entire directory of `.txt` f
 # Automatic best-model discovery (ranked by eval_f1_macro)
 uv run easyslm predict \
   --type cls \
-  --data data/sample_news_validation.txt \
+  --data data/agnews_tiny/val.txt \
   --output-dir predictions/cls_best
 
 # Automatic best-model discovery ranked by lowest validation loss
 uv run easyslm predict \
   --type cls \
   --metric eval_loss \
-  --data data/sample_news_single_label_val.txt \
+  --data data/agnews_tiny/val.txt \
   --output-dir predictions/cls_lowest_loss
 
 # Inference using an explicit checkpoint directory
 uv run easyslm predict \
   --model models/finetuned/Qwen2.5-0.5B_cls_20261114_190335 \
-  --data data/sample_news_validation.txt \
+  --data data/agnews_tiny/val.txt \
   --output-dir predictions/cls_explicit
 ```
 
@@ -355,7 +356,7 @@ config = FineTuningConfig.from_yaml(
 )
 
 tuner = SLMFineTuner(model_name="Qwen/Qwen2.5-0.5B", config=config)
-results = tuner.train(train_data_path="data/sample_news_single_label_train.txt")
+results = tuner.train(train_data_path="data/agnews_tiny")
 print("Saved checkpoint to:", results["checkpoint_dir"])
 print("Validation metrics:", results["eval_metrics"])
 
