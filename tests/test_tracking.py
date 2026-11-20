@@ -160,6 +160,17 @@ class TestTrackingTablesAndPlotting:
         )
         assert t_no_err["input_text"] == []
 
+        # Partial multi-label mismatch (differs on one class, matches on another)
+        t_partial_err = create_validation_errors_table(
+            input_texts=["partial"],
+            y_true=np.array([[1, 1]]),
+            y_pred=np.array([[1, 0]]),
+            classes=classes,
+            raw_outputs=["r_partial"],
+            parsed_outputs=[["economy"]],
+        )
+        assert t_partial_err["input_text"] == ["partial"]
+
         for fig in (
             create_single_label_confusion_matrix_figure(y_true[:2], y_pred[:2], classes, epoch=1),
             create_cross_label_confusion_matrix_figure(y_true, y_pred, classes, epoch=1),
