@@ -17,8 +17,8 @@ from src import ModelFactory
 
 factory = ModelFactory(
     cache_dir="/data/hf_models",  # defaults to ~/.easyslm/models
-    device="cuda",                # auto-detected if None
-    torch_dtype=torch.bfloat16,   # auto-selects bf16/fp16/fp32 if None
+    device="cuda",  # auto-detected if None
+    torch_dtype=torch.bfloat16,  # auto-selects bf16/fp16/fp32 if None
 )
 ```
 
@@ -77,8 +77,8 @@ When minority classes are under-represented in your training split, enable overs
 ```python
 config = FineTuningConfig(
     mode="cls",
-    oversample_strategy="sqrt",   # "sqrt" (moderate) or "max" (full balance)
-    oversample_max_factor=3.0,    # cap replication at 3x per class
+    oversample_strategy="sqrt",  # "sqrt" (moderate) or "max" (full balance)
+    oversample_max_factor=3.0,  # cap replication at 3x per class
     seed=42,
 )
 ```
