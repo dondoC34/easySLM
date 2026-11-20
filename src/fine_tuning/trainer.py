@@ -33,7 +33,6 @@ from src.slm import ModelFactory, SLMBase, SLMCls, SLMJson
 from src.tracking.artifacts import log_evaluation_artifacts, log_run_metadata
 from src.tracking.config import configure_mlflow_env, get_mlflow_config
 from src.tracking.tables import create_validation_errors_table
-from src.utils.config import get_project_root
 from src.utils.model_card import clean_slug
 
 logger = logging.getLogger(__name__)
@@ -63,11 +62,7 @@ class SLMFineTuner:
         if isinstance(config, str | Path):
             self.config = FineTuningConfig.from_yaml(config)
         elif config is None:
-            default_yaml = get_project_root() / "configs/training_config.yml"
-            if default_yaml.exists():
-                self.config = FineTuningConfig.from_yaml(default_yaml)
-            else:
-                self.config = FineTuningConfig()
+            self.config = FineTuningConfig()
         else:
             self.config = config
 
