@@ -10,7 +10,7 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-> **Full Documentation (Tutorials, CLI & API Reference):** [https://dondoc34.github.io/easySLM/](https://dondoc34.github.io/easySLM/)
+> **Full Documentation (Tutorials, CLI & API Reference):** [Documentation](https://dondoc34.github.io/easySLM/).
 
 **easySLM** is a lightweight, generic, and production-ready framework for fine-tuning and running inference with **Small Language Models (SLMs)** (e.g., Qwen 2.5, LLaMA 3.2, Gemma 2, SmolLM2) on single-label and multi-label text classification tasks.
 
@@ -422,31 +422,3 @@ predictions = model.predict_texts(
 for item in predictions:
     print(item["text"], "->", item["predictions"], item.get("probabilities"))
 ```
-
----
-
-## Development & Code Quality
-
-This repository uses **Pytest** for unit tests, **Ruff** for linting and formatting, and **MyPy** for static type checking:
-
-```bash
-# Run unit test suite
-uv run pytest
-
-# Run linter and formatter checks
-uv run ruff check .
-uv run ruff format --check .
-
-# Run static type checking
-uv run mypy src
-
-# Preview documentation locally with live reload (opens http://127.0.0.1:8000 automatically)
-uv sync --group docs
-uv run easyslm docs start --port 8000
-```
-
----
-
-## License
-
-This project is licensed under the MIT License.
