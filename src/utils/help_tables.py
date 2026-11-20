@@ -128,6 +128,14 @@ MLFLOW_COMMANDS: list[tuple[str, str, str]] = [
     ),
 ]
 
+DOCS_COMMANDS: list[tuple[str, str, str]] = [
+    (
+        "start (serve)",
+        "easyslm docs start [OPTIONS]",
+        "Start local MkDocs live-reload server and open browser (--host, --port, --no-open).",
+    ),
+]
+
 
 def render_table(
     title: str,
@@ -220,8 +228,21 @@ def get_mlflow_help_table() -> str:
     )
 
 
+def get_docs_help_table() -> str:
+    """Generates the formatted table for `easyslm docs`."""
+    return render_table(
+        title="COMMAND: easyslm docs",
+        subtitle="Preview the MkDocs documentation locally with live reload.",
+        rows=DOCS_COMMANDS,
+        headers=("Subcommand", "Syntax", "Description"),
+        w_param=16,
+        w_type=34,
+        w_desc=50,
+    )
+
+
 def get_combined_help_tables() -> str:
-    """Generates the combined tables for ftune, predict, and mlflow."""
+    """Generates the combined tables for ftune, predict, mlflow, and docs."""
     banner = [
         "==========================================================================================================",
         "                                     easySLM CLI - PARAMETER REFERENCE                                    ",
@@ -230,6 +251,7 @@ def get_combined_help_tables() -> str:
         "  easyslm ftune [OPTIONS]      Run fine-tuning with PEFT (LoRA), HF Trainer, and MLflow",
         "  easyslm predict [OPTIONS]    Run batch inference (with optional automatic best-model selection)",
         "  easyslm mlflow [COMMAND]     Manage MLflow tracking server, runs, metrics, and storage",
+        "  easyslm docs [COMMAND]       Serve MkDocs documentation locally and open in browser",
         "  easyslm info                 Display CUDA and GPU system diagnostics",
         "",
         "Run 'easyslm <command> --help' to inspect an individual command.",
@@ -242,4 +264,6 @@ def get_combined_help_tables() -> str:
         + get_predict_help_table()
         + "\n"
         + get_mlflow_help_table()
+        + "\n"
+        + get_docs_help_table()
     )
